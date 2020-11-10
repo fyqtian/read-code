@@ -35,7 +35,8 @@ func main() {
 type Reader struct {
 	buf          []byte
 	rd           io.Reader // reader provided by the client
-	r, w         int       // buf read and write positions
+	r			 int       //从buf读取的位置
+    w         	 int       //rd写到buf的位置
 	err          error
 	lastByte     int // last byte read for UnreadByte; -1 means invalid
 	lastRuneSize int // size of last rune read for UnreadRune; -1 means invalid
@@ -139,7 +140,7 @@ func (b *Reader) Read(p []byte) (n int, err error) {
 
 
 
-```
+```go
 
 // 读取byte直到分隔符
 // 返回切片指向自己的Buf
@@ -241,7 +242,7 @@ func (b *Reader) fill() {
 
 
 
-```
+```go
 // ReadBytes reads until the first occurrence of delim in the input,
 // returning a slice containing the data up to and including the delimiter.
 // If ReadBytes encounters an error before finding a delimiter,
