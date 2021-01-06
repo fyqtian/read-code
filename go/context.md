@@ -1,8 +1,6 @@
 ### Context
 
-
-
-上下文 [`context.Context`](https://github.com/golang/go/blob/df2999ef43ea49ce1578137017949c0ee660608a/src/context/context.go#L62-L154) 是用来设置截止日期、同步信号，传递请求相关值的结构体。上下文与 Goroutine 有比较密切的关系。[`context.Context`](https://github.com/golang/go/blob/df2999ef43ea49ce1578137017949c0ee660608a/src/context/context.go#L62-L154) 是 Go 语言中独特的设计，在其他编程语言中我们很少见到类似的概念。
+每一个 context.Context 都会从最顶层的 Goroutine 一层一层传递到最下层。context.Context 可以在上层 Goroutine 执行出现错误时，将信号及时同步给下层
 
 
 
@@ -19,7 +17,7 @@ import (
 func main() {
    ctx := context.Background()
 
-   ctx, _ = context.WithTimeout(ctx, 5*time.Second)
+   ctx, _ = context.WithTimeout(ctx, 2*time.Second)
    log.Println("start")
 
    go subMission(ctx, 1)
@@ -46,6 +44,17 @@ func subMission(ctx context.Context, taskId int) {
       time.Sleep(time.Second)
    }
 }
+//output
+2020/12/29 17:43:24 start
+2020/12/29 17:43:24 taskId=2  start work
+2020/12/29 17:43:24 taskId=1  start work
+2020/12/29 17:43:24 taskId=1  working
+2020/12/29 17:43:24 taskId=2  working
+2020/12/29 17:43:25 taskId=2  working
+2020/12/29 17:43:25 taskId=1  working
+2020/12/29 17:43:26 context deadline exceeded
+2020/12/29 17:43:26 taskId=2 end work
+2020/12/29 17:43:26 taskId=1 end work
 ```
 
 
@@ -76,7 +85,7 @@ type Context interface {
 
 
 ```go
-//Backgrouod坐位顶层父节点
+//Backgrouod顶层父节点
 var (
    background = new(emptyCtx)
    todo       = new(emptyCtx)
@@ -138,7 +147,7 @@ type cancelCtx struct {
 	Context    					   //父context
 
 	mu       sync.Mutex            // protects following fields
-	done     chan struct{}         // created lazily, closed by first cancel call
+    done     chan struct{}         // 延迟创建 调用ctx.Done()创建
 	children map[canceler]struct{} // set to nil by the first cancel call
 	err      error                 // set to non-nil by the first cancel call
 }
@@ -147,7 +156,7 @@ type cancelCtx struct {
 func propagateCancel(parent Context, child canceler) {
 	done := parent.Done()
 	if done == nil {
-		return // 父节点 不会触发取消信号 返回
+		return // 父context是不能取消类型得 返回 比如emptyCtx valueCtx
 	}
 
 	select {
@@ -158,7 +167,7 @@ func propagateCancel(parent Context, child canceler) {
 		return
 	default:
 	}
-	//判断父节点是不是cancel类型
+	//判断父节点是不是cancelCtx类型
 	if p, ok := parentCancelCtx(parent); ok {
 		p.mu.Lock()
 		if p.err != nil {
@@ -173,7 +182,9 @@ func propagateCancel(parent Context, child canceler) {
 		}
 		p.mu.Unlock()
 	} else {
+        //for test
 		atomic.AddInt32(&goroutines, +1)
+        //过期类型得 启goroutine监听
 		go func() {
 			select {
              //监听父节点取消
@@ -222,6 +233,8 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 
 
 ```go
+
+
 func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc) {
    return WithDeadline(parent, time.Now().Add(timeout))
 }
@@ -232,7 +245,7 @@ func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
 	}
     //
 	if cur, ok := parent.Deadline(); ok && cur.Before(d) {
-		// 如果父节点比当前早结束
+		// 如果父节点比当前早结束 转换成cancelCtx
 		return WithCancel(parent)
 	}
 	c := &timerCtx{
@@ -276,11 +289,9 @@ func (c *timerCtx) cancel(removeFromParent bool, err error) {
 		// Remove this timerCtx from its parent cancelCtx's children.
 		removeChild(c.cancelCtx.Context, c)
 	}
-	c.mu.Lock()
+	c.mu.Lock()  
 	if c.timer != nil {
-		c.timer.St
-        
-        op()
+		c.timer.Stop()
 		c.timer = nil
 	}
 	c.mu.Unlock()
