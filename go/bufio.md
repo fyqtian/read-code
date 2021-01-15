@@ -4,7 +4,7 @@
 
 bufio主要是使用自己的从底层读取数据存放在自己的buf中，后续的操作都从自己的buf中读取，减少io
 
-```
+```go
 //example
 package main
 

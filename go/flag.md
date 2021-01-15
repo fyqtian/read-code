@@ -28,8 +28,7 @@ func main() {
 //output
 go run main.go  -first=dd -slice=a,b,c
 Usage of C:\Users\ADMINI~1\AppData\Local\Temp\go-build355297882\b001\exe\main.exe:
-  -first string
-        input string
+dd <nil> [a b c]
 
 ```
 
