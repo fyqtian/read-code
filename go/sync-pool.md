@@ -178,7 +178,7 @@ func (p *Pool) pinSlow() (*poolLocal, int) {
     //当前P的数量
 	size := runtime.GOMAXPROCS(0)
 	local := make([]poolLocal, size)
-	//没理解 每个p的local都不同怎么去取别人的poolLocal
+	
     atomic.StorePointer(&p.local, unsafe.Pointer(&local[0])) // store-release
 	atomic.StoreUintptr(&p.localSize, uintptr(size))         // store-release
     return &local[pid], pid
@@ -286,10 +286,93 @@ func poolCleanup() {
 	oldPools, allPools = allPools, nil
 }
 
+// poolChain是一个动态大小的双向链接列表的双端队列，每个出站队列的大小是前一个队列的两倍。也就是说poolChain里面每个元素poolChainElt都是一个双端队列。
+// head指向的poolChainElt，是用于Producer去Push元素的，不需要做同步处理。
+// tail指向的poolChainElt，是用于Consumer从tail去pop元素的，这里的读写需要保证原子性。
+type poolChain struct {
+	head *poolChainElt
+	tail *poolChainElt
+}
+
+type poolChainElt struct {
+	poolDequeue
+	next, prev *poolChainElt
+}
+// poolDequeue is a lock-free fixed-size single-producer,
+// multi-consumer queue. The single producer can both push and pop
+// from the head, and consumers can pop from the tail.
+//
+// It has the added feature that it nils out unused slots to avoid
+// unnecessary retention of objects. This is important for sync.Pool,
+// but not typically a property considered in the literature.
+type poolDequeue struct {
+	// 用高32位和低32位分别表示head和tail
+	// head是下一个fill的slot的index;
+	// tail是deque中最老的一个元素的index
+	// 队列中有效元素是[tail, head)
+	headTail uint64
+
+	// vals is a ring buffer of interface{} values stored in this
+	// dequeue. The size of this must be a power of 2.
+	//
+	// vals[i].typ is nil if the slot is empty and non-nil
+	// otherwise. A slot is still in use until *both* the tail
+	// index has moved beyond it and typ has been set to nil. This
+	// is set to nil atomically by the consumer and read
+	// atomically by the producer.
+	vals []eface
+}
 
 
+func (c *poolChain) popHead() (interface{}, bool) {
+	d := c.head
+	for d != nil {
+       	//从ringbuffer找
+		if val, ok := d.popHead(); ok {
+			return val, ok
+		}
+		//找下一个
+		d = loadPoolChainElt(&d.prev)
+	}
+    //节点都是空返回
+	return nil, false
+}
 
+// popHead removes and returns the element at the head of the queue.
+// It returns false if the queue is empty. It must only be called by a
+// single producer.
+//
+func (d *poolDequeue) popHead() (interface{}, bool) {
+	var slot *eface
+	for {
+		ptrs := atomic.LoadUint64(&d.headTail)
+		head, tail := d.unpack(ptrs)
+		if tail == head {
+			// Queue is empty.
+			return nil, false
+		}
 
+		// Confirm tail and decrement head. We do this before
+		// reading the value to take back ownership of this
+		// slot.
+		head--
+		ptrs2 := d.pack(head, tail)
+		if atomic.CompareAndSwapUint64(&d.headTail, ptrs, ptrs2) {
+			// We successfully took back slot.
+			slot = &d.vals[head&uint32(len(d.vals)-1)]
+			break
+		}
+	}
+
+	val := *(*interface{})(unsafe.Pointer(slot))
+	if val == dequeueNil(nil) {
+		val = nil
+	}
+	// Zero the slot. Unlike popTail, this isn't racing with
+	// pushHead, so we don't need to be careful here.
+	*slot = eface{}
+	return val, true
+}
 
 
 
