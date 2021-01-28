@@ -24,6 +24,25 @@ func main() {
 
 
 ```go
+状态						解释
+timerNoStatus			还没有设置状态
+timerWaiting			等待触发
+timerRunning			运行计时器函数
+timerDeleted			被删除
+timerRemoving			正在被删除
+timerRemoved			已经被停止并从堆中删除
+timerModifying			正在被修改
+timerModifiedEarlier	被修改到了更早的时间
+timerModifiedLater		被修改到了更晚的时间
+timerMoving				已经被修改正在被移动
+
+上述表格已经展示了不同状态的含义，但是我们还需要展示一些重要的信息，例如状态的存在时间、计时器是否在堆上等：
+
+timerRunning、timerRemoving、timerModifying 和 timerMoving — 停留的时间都比较短；
+timerWaiting、timerRunning、timerDeleted、timerRemoving、timerModifying、timerModifiedEarlier、timerModifiedLater 和 timerMoving — 计时器在处理器的堆上；
+timerNoStatus 和 timerRemoved — 计时器不在堆上；
+timerModifiedEarlier 和 timerModifiedLater — 计时器虽然在堆上，但是可能位于错误的位置上，需要重新排序；
+
 // Ticket持有一个channel，定时往这个通道往送消息
 type Ticker struct {
    C <-chan Time // The channel on which the ticks are delivered.
@@ -32,22 +51,20 @@ type Ticker struct {
 
 // 同runtime.timer同步
 type runtimeTimer struct {
-	// If this timer is on a heap, which P's heap it is on.
-	// puintptr rather than *p to match uintptr in the versions
-	// of this struct defined in other packages.
-    // 如果timer在在堆上，PP指向p？
+	//挂在的p
 	pp puintptr
-	// Timer wakes up at when, and then at when+period, ... (period > 0 only)
-	// each time calling f(arg, now) in the timer goroutine, so f must be
-	// a well-behaved function and not block.
+	//当前计时器被唤醒的时间
 	when   int64
+    //两次被唤醒的间隔
 	period int64
+    //每当计时器被唤醒时都会调用的函数
 	f      func(interface{}, uintptr)
+    //计时器被唤醒时调用 f 传入的参数
 	arg    interface{}
 	seq    uintptr
-	// What to set the when field to in timerModifiedXX status.
+	//  计时器处于 timerModifiedXX 状态时，用于设置 when 字段；.
 	nextwhen int64
-	// The status field holds one of the values below.
+	// 计时器的状态；
 	status uint32
 }
 
@@ -80,16 +97,8 @@ func NewTicker(d Duration) *Ticker {
 func startTimer(t *timer) {
 	addtimer(t)
 }
-
-// addtimer adds a timer to the current P.
-// This should only be called with a newly created timer.
-// That avoids the risk of changing the when field of a timer in some P's heap,
-// which could cause the heap to become unsorted.
 // addtimer增加一个timer到当前的p
-// 
 func addtimer(t *timer) {
-	// when must never be negative; otherwise runtimer will overflow
-	// during its delta calculation and never expire other runtime timers.
 	if t.when < 0 {
 		t.when = maxWhen
 	}
@@ -107,7 +116,7 @@ func addtimer(t *timer) {
     //timer加入堆
 	doaddtimer(pp, t)
 	unlock(&pp.timersLock)
-
+	//唤醒网络轮询器中休眠的线程
 	wakeNetPoller(when)
 }
 
@@ -145,7 +154,7 @@ func cleantimers(pp *p) {
 			}
 			atomic.Xadd(&pp.deletedTimers, -1)
 		case timerModifiedEarlier, timerModifiedLater:
-            // timer修改了时间（？）
+            // reset调整过的timer
 			if !atomic.Cas(&t.status, s, timerMoving) {
 				continue
 			}
@@ -204,10 +213,6 @@ func wakeNetPoller(when int64) {
 	}
 }
 
-
-// stopTimer stops a timer.
-// It reports whether t was stopped before being run.
-//go:linkname stopTimer time.stopTimer
 func stopTimer(t *timer) bool {
 	return deltimer(t)
 }
@@ -215,6 +220,11 @@ func stopTimer(t *timer) bool {
 // deltimer删除timer，也许它在其他的p上，因此我们不能实际上从堆上删除，我们只能标记它已经删除
 // 它将会在适当的时间被它所在的P移除
 // 返回计时器是否被删除
+//runtime.deltimer 函数会标记需要删除的计时器，它会根据以下的规则处理计时器：
+//timerWaiting -> timerModifying -> timerDeleted
+//timerModifiedEarlier -> timerModifying -> timerDeleted
+//timerModifiedLater -> timerModifying -> timerDeleted
+//其他状态 -> 等待状态改变或者直接返回
 func deltimer(t *timer) bool {
 	for {
         //加载状态
@@ -294,6 +304,8 @@ func NewTimer(d Duration) *Timer {
 	return t
 }
 
+
+
 func sendTime(c interface{}, seq uintptr) {
 	// Non-blocking send of time on c.
 	// Used in NewTimer, it cannot block anyway (buffer).
@@ -323,4 +335,291 @@ func goFunc(arg interface{}, seq uintptr) {
 	go arg.(func())()
 }
 
+
+// Reset stops a ticker and resets its period to the specified duration.
+// The next tick will arrive after the new period elapses.
+func (t *Ticker) Reset(d Duration) {
+	if t.r.f == nil {
+		panic("time: Reset called on uninitialized Ticker")
+	}
+	modTimer(&t.r, when(d), int64(d), t.r.f, t.r.arg, t.r.seq)
+}
+
+// modtimer modifies an existing timer.
+// This is called by the netpoll code or time.Ticker.Reset.
+// Reports whether the timer was modified before it was run.
+//runtime.modtimer 会修改已经存在的计时器，它会根据以下的规则处理计时器：
+//timerWaiting -> timerModifying -> timerModifiedXX
+//timerModifiedXX -> timerModifying -> timerModifiedYY
+//timerNoStatus -> timerModifying -> timerWaiting
+//timerRemoved -> timerModifying -> timerWaiting
+//timerDeleted -> timerModifying -> timerWaiting
+//其他状态 -> 等待状态改变
+func modtimer(t *timer, when, period int64, f func(interface{}, uintptr), arg interface{}, seq uintptr) bool {
+	if when < 0 {
+		when = maxWhen
+	}
+
+	status := uint32(timerNoStatus)
+	wasRemoved := false
+	var pending bool
+	var mp *m
+loop:
+	for {
+		switch status = atomic.Load(&t.status); status {
+		case timerWaiting, timerModifiedEarlier, timerModifiedLater:
+			// Prevent preemption while the timer is in timerModifying.
+			// This could lead to a self-deadlock. See #38070.
+			mp = acquirem()
+			if atomic.Cas(&t.status, status, timerModifying) {
+				pending = true // timer not yet run
+				break loop
+			}
+			releasem(mp)
+		case timerNoStatus, timerRemoved:
+			// Prevent preemption while the timer is in timerModifying.
+			// This could lead to a self-deadlock. See #38070.
+			mp = acquirem()
+
+			// Timer was already run and t is no longer in a heap.
+			// Act like addtimer.
+			if atomic.Cas(&t.status, status, timerModifying) {
+				wasRemoved = true
+				pending = false // timer already run or stopped
+				break loop
+			}
+			releasem(mp)
+		case timerDeleted:
+			// Prevent preemption while the timer is in timerModifying.
+			// This could lead to a self-deadlock. See #38070.
+			mp = acquirem()
+			if atomic.Cas(&t.status, status, timerModifying) {
+				atomic.Xadd(&t.pp.ptr().deletedTimers, -1)
+				pending = false // timer already stopped
+				break loop
+			}
+			releasem(mp)
+		case timerRunning, timerRemoving, timerMoving:
+			// The timer is being run or moved, by a different P.
+			// Wait for it to complete.
+			osyield()
+		case timerModifying:
+			// Multiple simultaneous calls to modtimer.
+			// Wait for the other call to complete.
+			osyield()
+		default:
+			badTimer()
+		}
+	}
+
+	t.period = period
+	t.f = f
+	t.arg = arg
+	t.seq = seq
+
+	if wasRemoved {
+		t.when = when
+		pp := getg().m.p.ptr()
+		lock(&pp.timersLock)
+		doaddtimer(pp, t)
+		unlock(&pp.timersLock)
+		if !atomic.Cas(&t.status, timerModifying, timerWaiting) {
+			badTimer()
+		}
+		releasem(mp)
+		wakeNetPoller(when)
+	} else {
+		// The timer is in some other P's heap, so we can't change
+		// the when field. If we did, the other P's heap would
+		// be out of order. So we put the new when value in the
+		// nextwhen field, and let the other P set the when field
+		// when it is prepared to resort the heap.
+		t.nextwhen = when
+
+		newStatus := uint32(timerModifiedLater)
+		if when < t.when {
+			newStatus = timerModifiedEarlier
+		}
+
+		// Update the adjustTimers field.  Subtract one if we
+		// are removing a timerModifiedEarlier, add one if we
+		// are adding a timerModifiedEarlier.
+		adjust := int32(0)
+		if status == timerModifiedEarlier {
+			adjust--
+		}
+		if newStatus == timerModifiedEarlier {
+			adjust++
+		}
+		if adjust != 0 {
+			atomic.Xadd(&t.pp.ptr().adjustTimers, adjust)
+		}
+
+		// Set the new status of the timer.
+		if !atomic.Cas(&t.status, timerModifying, newStatus) {
+			badTimer()
+		}
+		releasem(mp)
+
+		// If the new status is earlier, wake up the poller.
+		if newStatus == timerModifiedEarlier {
+			wakeNetPoller(when)
+		}
+	}
+
+	return pending
+}
+//runtime.adjusttimers 与 runtime.cleantimers 的作用相似，它们都会删除堆中的计时器并修改状态为 timerModifiedEarlier 和 timerModifiedLater 的计时器的时间，它们也会遵循相同的规则处理计时器状态：
+//timerDeleted -> timerRemoving -> timerRemoved
+//timerModifiedXX -> timerMoving -> timerWaiting
+//与 runtime.cleantimers 不同的是，上述函数可能会遍历处理器堆中的全部计时器（包含退出条件），而不是只修改四叉堆顶部。
+func adjusttimers(pp *p, now int64) {
+	var moved []*timer
+loop:
+	for i := 0; i < len(pp.timers); i++ {
+		t := pp.timers[i]
+		switch s := atomic.Load(&t.status); s {
+		case timerDeleted:
+			// 删除堆中的计时器
+		case timerModifiedEarlier, timerModifiedLater:
+			// 修改计时器的时间
+		case ...
+		}
+	}
+	if len(moved) > 0 {
+		addAdjustedTimers(pp, moved)
+	}
+}
+
+
+// runtimer examines the first timer in timers. If it is ready based on now,
+// it runs the timer and removes or updates it.
+// Returns 0 if it ran a timer, -1 if there are no more timers, or the time
+// when the first timer should run.
+// The caller must have locked the timers for pp.
+// If a timer is run, this will temporarily unlock the timers.
+//go:systemstack
+func runtimer(pp *p, now int64) int64 {
+	for {
+		t := pp.timers[0]
+		if t.pp.ptr() != pp {
+			throw("runtimer: bad p")
+		}
+		switch s := atomic.Load(&t.status); s {
+		case timerWaiting:
+			if t.when > now {
+				// Not ready to run.
+				return t.when
+			}
+
+			if !atomic.Cas(&t.status, s, timerRunning) {
+				continue
+			}
+			// Note that runOneTimer may temporarily unlock
+			// pp.timersLock.
+			runOneTimer(pp, t, now)
+			return 0
+
+		case timerDeleted:
+			if !atomic.Cas(&t.status, s, timerRemoving) {
+				continue
+			}
+			dodeltimer0(pp)
+			if !atomic.Cas(&t.status, timerRemoving, timerRemoved) {
+				badTimer()
+			}
+			atomic.Xadd(&pp.deletedTimers, -1)
+			if len(pp.timers) == 0 {
+				return -1
+			}
+
+		case timerModifiedEarlier, timerModifiedLater:
+			if !atomic.Cas(&t.status, s, timerMoving) {
+				continue
+			}
+			t.when = t.nextwhen
+			dodeltimer0(pp)
+			doaddtimer(pp, t)
+			if s == timerModifiedEarlier {
+				atomic.Xadd(&pp.adjustTimers, -1)
+			}
+			if !atomic.Cas(&t.status, timerMoving, timerWaiting) {
+				badTimer()
+			}
+
+		case timerModifying:
+			// Wait for modification to complete.
+			osyield()
+
+		case timerNoStatus, timerRemoved:
+			// Should not see a new or inactive timer on the heap.
+			badTimer()
+		case timerRunning, timerRemoving, timerMoving:
+			// These should only be set when timers are locked,
+			// and we didn't do it.
+			badTimer()
+		default:
+			badTimer()
+		}
+	}
+}
+
+
+
+
+runtime.checkTimers 是调度器用来运行处理器中计时器的函数，它会在发生以下情况时被调用：
+
+调度器调用 runtime.schedule 执行调度时；
+调度器调用 runtime.findrunnable 获取可执行的 Goroutine 时；
+调度器调用 runtime.findrunnable 从其他处理器窃取计时器时；
+
+func checkTimers(pp *p, now int64) (rnow, pollUntil int64, ran bool) {
+	if atomic.Load(&pp.adjustTimers) == 0 {
+		next := int64(atomic.Load64(&pp.timer0When))
+		if next == 0 {
+			return now, 0, false
+		}
+		if now == 0 {
+			now = nanotime()
+		}
+		if now < next {
+			if pp != getg().m.p.ptr() || int(atomic.Load(&pp.deletedTimers)) <= int(atomic.Load(&pp.numTimers)/4) {
+				return now, next, false
+			}
+		}
+	}
+
+	lock(&pp.timersLock)
+	adjusttimers(pp)
+}
+
+系统监控 #
+系统监控函数 runtime.sysmon 也可能会触发函数的计时器，下面的代码片段中省略了大量与计时器无关的代码：
+func sysmon() {
+	...
+	for {
+		...
+		now := nanotime()
+		next, _ := timeSleepUntil()
+		...
+		lastpoll := int64(atomic.Load64(&sched.lastpoll))
+		if netpollinited() && lastpoll != 0 && lastpoll+10*1000*1000 < now {
+			atomic.Cas64(&sched.lastpoll, uint64(lastpoll), uint64(now))
+			list := netpoll(0)
+			if !list.empty() {
+				incidlelocked(-1)
+				injectglist(&list)
+				incidlelocked(1)
+			}
+		}
+		if next < now {
+			startm(nil, false)
+		}
+		...
+}func sysm
 ```
+
+
+
+
+
