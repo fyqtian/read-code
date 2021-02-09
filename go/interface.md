@@ -11,6 +11,8 @@ https://www.qcrao.com/2019/04/25/dive-into-go-interface/
 
 https://www.cnblogs.com/landv/p/11589074.html
 
+https://github.com/cch123/asmshare/blob/master/layout.md
+
 Go 语言在编译期间对代码进行类型检查，上述代码总共触发了三次类型检查：
 1.将变量赋值给接口类型
 2.变量通过函数调用，函数参数是接口类型
