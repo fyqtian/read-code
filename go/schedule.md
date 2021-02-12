@@ -6,6 +6,8 @@ https://www.qcrao.com/2019/09/02/dive-into-go-scheduler/
 
 https://draveness.me/golang/docs/part3-runtime/ch06-concurrency/golang-goroutine/
 
+https://segmentfault.com/a/1190000016038785
+
 | 中文名                | 源码名称             | 作用域     | 简要说明                                 |
 | --------------------- | -------------------- | ---------- | ---------------------------------------- |
 | 全局M列表             | runtime.allm         | 运行时系统 | 存放所有M                                |
@@ -525,4 +527,137 @@ top:
 
    execute(gp, inheritTime)
 }
+
+
+// 创建一个新的siz大小的参数的g
+// 放到等待队列中等待运行 编译器将go语句翻译为这个方法
+// 这个调用的栈不太一样，他假设传递给fn的参数紧跟在fn地址后，因此，他们是逻辑上newproc的一部分，即使他们并没有出现在参数列表
+// （因为他们的类型不同在不同的调用地方）
+
+// 这一定是nosplit，因为变量在当前地址后面，栈复制将不会调整他们栈分裂也不会复制他们
+
+func newproc(siz int32, fn *funcval) {
+    //参数
+	argp := add(unsafe.Pointer(&fn), sys.PtrSize)
+	//当前g
+    gp := getg()
+	pc := getcallerpc()
+	systemstack(func() {
+		//创建新的g
+        newg := newproc1(fn, argp, siz, gp, pc)
+		_p_ := getg().m.p.ptr()
+        // 放到当前p 如果p满了放到全局
+		runqput(_p_, newg, true)
+		// 如果主线程已经执行 判断是否有idel的p，有就创建m绑定p
+		if mainStarted {
+			wakep()
+		}
+	})
+}
+
+
+// 创建一个g状态在_Grunnable，入口在fn，narg字节个参数在地址argp,callerpc是是调用者的PC，调用者负责把g加入到调度
+// 必须运行在系统栈，因为他是无法拆分栈
+//go:systemstack
+func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerpc uintptr) *g {
+	_g_ := getg()
+
+	if fn == nil {
+		_g_.m.throwing = -1 // do not dump full stacks
+		throw("go of nil func value")
+	}
+	acquirem() // disable preemption because it can be holding p in a local var
+	siz := narg
+	siz = (siz + 7) &^ 7
+
+	// We could allocate a larger initial stack if necessary.
+	// Not worth it: this is almost always an error.
+	// 4*sizeof(uintreg): extra space added below
+	// sizeof(uintreg): caller's LR (arm) or return address (x86, in gostartcall).
+	if siz >= _StackMin-4*sys.RegSize-sys.RegSize {
+		throw("newproc: function arguments too large for new goroutine")
+	}
+
+	_p_ := _g_.m.p.ptr()
+	newg := gfget(_p_)
+	if newg == nil {
+		newg = malg(_StackMin)
+		casgstatus(newg, _Gidle, _Gdead)
+		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
+	}
+	if newg.stack.hi == 0 {
+		throw("newproc1: newg missing stack")
+	}
+
+	if readgstatus(newg) != _Gdead {
+		throw("newproc1: new g is not Gdead")
+	}
+
+	totalSize := 4*sys.RegSize + uintptr(siz) + sys.MinFrameSize // extra space in case of reads slightly beyond frame
+	totalSize += -totalSize & (sys.SpAlign - 1)                  // align to spAlign
+	sp := newg.stack.hi - totalSize
+	spArg := sp
+	if usesLR {
+		// caller's LR
+		*(*uintptr)(unsafe.Pointer(sp)) = 0
+		prepGoExitFrame(sp)
+		spArg += sys.MinFrameSize
+	}
+	if narg > 0 {
+		memmove(unsafe.Pointer(spArg), argp, uintptr(narg))
+		// This is a stack-to-stack copy. If write barriers
+		// are enabled and the source stack is grey (the
+		// destination is always black), then perform a
+		// barrier copy. We do this *after* the memmove
+		// because the destination stack may have garbage on
+		// it.
+		if writeBarrier.needed && !_g_.m.curg.gcscandone {
+			f := findfunc(fn.fn)
+			stkmap := (*stackmap)(funcdata(f, _FUNCDATA_ArgsPointerMaps))
+			if stkmap.nbit > 0 {
+				// We're in the prologue, so it's always stack map index 0.
+				bv := stackmapdata(stkmap, 0)
+				bulkBarrierBitmap(spArg, spArg, uintptr(bv.n)*sys.PtrSize, 0, bv.bytedata)
+			}
+		}
+	}
+
+	memclrNoHeapPointers(unsafe.Pointer(&newg.sched), unsafe.Sizeof(newg.sched))
+	newg.sched.sp = sp
+	newg.stktopsp = sp
+	newg.sched.pc = funcPC(goexit) + sys.PCQuantum // +PCQuantum so that previous instruction is in same function
+	newg.sched.g = guintptr(unsafe.Pointer(newg))
+	gostartcallfn(&newg.sched, fn)
+	newg.gopc = callerpc
+	newg.ancestors = saveAncestors(callergp)
+	newg.startpc = fn.fn
+	if _g_.m.curg != nil {
+		newg.labels = _g_.m.curg.labels
+	}
+	if isSystemGoroutine(newg, false) {
+		atomic.Xadd(&sched.ngsys, +1)
+	}
+	casgstatus(newg, _Gdead, _Grunnable)
+
+	if _p_.goidcache == _p_.goidcacheend {
+		// Sched.goidgen is the last allocated id,
+		// this batch must be [sched.goidgen+1, sched.goidgen+GoidCacheBatch].
+		// At startup sched.goidgen=0, so main goroutine receives goid=1.
+		_p_.goidcache = atomic.Xadd64(&sched.goidgen, _GoidCacheBatch)
+		_p_.goidcache -= _GoidCacheBatch - 1
+		_p_.goidcacheend = _p_.goidcache + _GoidCacheBatch
+	}
+	newg.goid = int64(_p_.goidcache)
+	_p_.goidcache++
+	if raceenabled {
+		newg.racectx = racegostart(callerpc)
+	}
+	if trace.enabled {
+		traceGoCreate(newg, newg.startpc)
+	}
+	releasem(_g_.m)
+
+	return newg
+}
+
 ```

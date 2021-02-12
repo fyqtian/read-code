@@ -3,28 +3,6 @@
 
 
 ```go
-// 创建一个新的siz大小的参数的g
-// 放到等待队列中等待运行 编译器将go语句翻译为这个方法
-// 这个调用的栈不太一样，他假设传递给fn的参数紧跟在fn地址后，因此，他们是逻辑上newproc的一部分，即使他们并没有出现在参数列表
-// （因为他们的类型不同在不同的调用地方）
-
-// 这一定是nosplit，因为变量在当前地址后面，栈复制将不会调整他们栈分裂也不会复制他们
-
-func newproc(siz int32, fn *funcval) {
-	argp := add(unsafe.Pointer(&fn), sys.PtrSize)
-	gp := getg()
-	pc := getcallerpc()
-	systemstack(func() {
-		newg := newproc1(fn, argp, siz, gp, pc)
-
-		_p_ := getg().m.p.ptr()
-		runqput(_p_, newg, true)
-
-		if mainStarted {
-			wakep()
-		}
-	})
-}
 
 func osinit() {
 	ncpu = getproccount()
@@ -88,6 +66,7 @@ func schedinit() {
 	//netpoll
    sched.lastpoll = uint64(nanotime())
    procs := ncpu
+    //初始化p
    if n, ok := atoi32(gogetenv("GOMAXPROCS")); ok && n > 0 {
       procs = n
    }
@@ -117,6 +96,125 @@ func schedinit() {
       // to ensure runtime·modinfo is kept in the resulting binary.
       modinfo = ""
    }
+}
+
+// Change number of processors. The world is stopped, sched is locked.
+// gcworkbufs are not being modified by either the GC or
+// the write barrier code.
+// Returns list of Ps with local work, they need to be scheduled by the caller.
+func procresize(nprocs int32) *p {
+	old := gomaxprocs
+	if old < 0 || nprocs <= 0 {
+		throw("procresize: invalid arg")
+	}
+	if trace.enabled {
+		traceGomaxprocs(nprocs)
+	}
+
+	// update statistics
+	now := nanotime()
+	if sched.procresizetime != 0 {
+		sched.totaltime += int64(old) * (now - sched.procresizetime)
+	}
+	sched.procresizetime = now
+
+	// Grow allp if necessary.
+	if nprocs > int32(len(allp)) {
+		// Synchronize with retake, which could be running
+		// concurrently since it doesn't run on a P.
+		lock(&allpLock)
+		if nprocs <= int32(cap(allp)) {
+			allp = allp[:nprocs]
+		} else {
+			nallp := make([]*p, nprocs)
+			// Copy everything up to allp's cap so we
+			// never lose old allocated Ps.
+			copy(nallp, allp[:cap(allp)])
+			allp = nallp
+		}
+		unlock(&allpLock)
+	}
+
+	// initialize new P's
+	for i := old; i < nprocs; i++ {
+		pp := allp[i]
+		if pp == nil {
+			pp = new(p)
+		}
+		pp.init(i)
+		atomicstorep(unsafe.Pointer(&allp[i]), unsafe.Pointer(pp))
+	}
+	
+	_g_ := getg()
+    // 非p0变更状态
+	if _g_.m.p != 0 && _g_.m.p.ptr().id < nprocs {
+		// continue to use the current P
+		_g_.m.p.ptr().status = _Prunning
+		_g_.m.p.ptr().mcache.prepareForSweep()
+	} else {
+        // 释放当前的p并获取p0
+        // 我们必须在做这个在销毁当前p之前，因为p.destory本身有写屏障，因此我们需要一个合法的p
+		// release the current P and acquire allp[0].
+        //如果不是p0
+		if _g_.m.p != 0 {
+			if trace.enabled {
+				// Pretend that we were descheduled
+				// and then scheduled again to keep
+				// the trace sane.
+				traceGoSched()
+				traceProcStop(_g_.m.p.ptr())
+			}
+ 			//挂到m0?
+			_g_.m.p.ptr().m = 0
+		}
+		_g_.m.p = 0
+		p := allp[0]
+		p.m = 0
+		p.status = _Pidle
+        //当前的m绑定p
+		acquirep(p)
+		if trace.enabled {
+			traceGoStart()
+		}
+	}
+	
+	// g.m.p is now set, so we no longer need mcache0 for bootstrapping.
+	mcache0 = nil
+
+	// release resources from unused P's
+	for i := nprocs; i < old; i++ {
+		p := allp[i]
+		p.destroy()
+		// can't free P itself because it can be referenced by an M in syscall
+	}
+
+	// Trim allp.
+	if int32(len(allp)) != nprocs {
+		lock(&allpLock)
+		allp = allp[:nprocs]
+		unlock(&allpLock)
+	}
+
+	var runnablePs *p
+	for i := nprocs - 1; i >= 0; i-- {
+		p := allp[i]
+		if _g_.m.p.ptr() == p {
+			continue
+		}
+		p.status = _Pidle
+        // 如果无Local g放入idle
+		if runqempty(p) {
+			pidleput(p)
+		} else {
+			p.m.set(mget())
+			p.link.set(runnablePs)
+			runnablePs = p
+		}
+	}
+	stealOrder.reset(uint32(nprocs))
+	var int32p *int32 = &gomaxprocs // make compiler check that gomaxprocs is an int32
+	atomic.Store((*uint32)(unsafe.Pointer(int32p)), uint32(nprocs))
+	return runnablePs
 }
 
 // mstart是ms的入口
