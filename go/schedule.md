@@ -1,4 +1,4 @@
-### schedule
+### 	schedule
 
 https://blog.csdn.net/u010853261/article/details/84790392
 
@@ -67,6 +67,17 @@ https://segmentfault.com/a/1190000016038785
 
 
 <img src="..\images\2018120516114851.png" alt="2018120516114851" style="zoom:67%;" />
+
+
+
+除了上图中可能触发调度的时间点，运行时还会在线程启动 [`runtime.mstart`](https://draveness.me/golang/tree/runtime.mstart) 和 Goroutine 执行结束 [`runtime.goexit0`](https://draveness.me/golang/tree/runtime.goexit0) 触发调度。我们在这里会重点介绍运行时触发调度的几个路径：
+
+- 主动挂起 — [`runtime.gopark`](https://draveness.me/golang/tree/runtime.gopark) -> [`runtime.park_m`](https://draveness.me/golang/tree/runtime.park_m)
+- 系统调用 — [`runtime.exitsyscall`](https://draveness.me/golang/tree/runtime.exitsyscall) -> [`runtime.exitsyscall0`](https://draveness.me/golang/tree/runtime.exitsyscall0)
+- 协作式调度 — [`runtime.Gosched`](https://draveness.me/golang/tree/runtime.Gosched) -> [`runtime.gosched_m`](https://draveness.me/golang/tree/runtime.gosched_m) -> [`runtime.goschedImpl`](https://draveness.me/golang/tree/runtime.goschedImpl)
+- 系统监控 — [`runtime.sysmon`](https://draveness.me/golang/tree/runtime.sysmon) -> [`runtime.retake`](https://draveness.me/golang/tree/runtime.retake) -> [`runtime.preemptone`](https://draveness.me/golang/tree/runtime.preemptone)
+
+我们在这里介绍的调度时间点不是将线程的运行权直接交给其他任务，而是通过调度器的 [`runtime.schedule`](https://draveness.me/golang/tree/runtime.schedule) 重新调度。
 
 
 
@@ -412,7 +423,7 @@ type p struct {
 
 // 一轮调度找到可运行的goroutine并执行
 func schedule() {
-    //m当前g
+   
    _g_ := getg()
 	
    if _g_.m.locks != 0 {
@@ -433,7 +444,7 @@ func schedule() {
 top:
    pp := _g_.m.p.ptr()
    pp.preempt = false
-
+	//gc
    if sched.gcwaiting != 0 {
       gcstopm()
       goto top
@@ -448,7 +459,7 @@ top:
    if _g_.m.spinning && (pp.runnext != 0 || pp.runqhead != pp.runqtail) {
       throw("schedule: spinning with local work")
    }
-
+	// 检查定时器
    checkTimers(pp, 0)
 
    var gp *g
@@ -471,9 +482,8 @@ top:
       tryWakeP = tryWakeP || gp != nil
    }
    if gp == nil {
-      // Check the global runnable queue once in a while to ensure fairness.
-      // Otherwise two goroutines can completely occupy the local runqueue
-      // by constantly respawning each other.
+      // 偶尔检查全局runnable队列确保公平
+      // 否则两个goroutine完全占据本地的runqueue,彼此不断调度
       if _g_.m.p.ptr().schedtick%61 == 0 && sched.runqsize > 0 {
          lock(&sched.lock)
          gp = globrunqget(_g_.m.p.ptr(), 1)
@@ -481,17 +491,23 @@ top:
       }
    }
    if gp == nil {
+       // 从本地的队列找
       gp, inheritTime = runqget(_g_.m.p.ptr())
-      // We can see gp != nil here even if the M is spinning,
-      // if checkTimers added a local goroutine via goready.
+       // 我么可以看到gp != nil 即使m在空转
+       // 如果checkTimers通过goready添加一个本地goroutine
    }
    if gp == nil {
+       //查找要执行的可运行goroutine。
+		//尝试从其他P窃取，从本地或全局队列获取g，轮询网络。
       gp, inheritTime = findrunnable() // blocks until work is available
    }
 
    // This thread is going to run a goroutine and is not spinning anymore,
    // so if it was marked as spinning we need to reset it now and potentially
    // start a new spinning M.
+   // 这个线程将要执行goroutine并且不再自旋
+   // 因此我们将要重置标记
+   // 开始一个新的自旋m
    if _g_.m.spinning {
       resetspinning()
    }
@@ -524,7 +540,7 @@ top:
       startlockedm(gp)
       goto top
    }
-
+	// 执行goroutine
    execute(gp, inheritTime)
 }
 
@@ -660,4 +676,258 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	return newg
 }
 
+
+// Tries to add one more P to execute G's.
+// Called when a G is made runnable (newproc, ready).
+func wakep() {
+	if atomic.Load(&sched.npidle) == 0 {
+		return
+	}
+	// be conservative about spinning threads
+	if atomic.Load(&sched.nmspinning) != 0 || !atomic.Cas(&sched.nmspinning, 0, 1) {
+		return
+	}
+	startm(nil, true)
+}
+
+// Schedules gp to run on the current M.
+// If inheritTime is true, gp inherits the remaining time in the
+// current time slice. Otherwise, it starts a new time slice.
+// Never returns.
+//
+// Write barriers are allowed because this is called immediately after
+// acquiring a P in several places.
+//
+//go:yeswritebarrierrec
+func execute(gp *g, inheritTime bool) {
+	_g_ := getg()
+
+	// Assign gp.m before entering _Grunning so running Gs have an
+	// M.
+	_g_.m.curg = gp
+	gp.m = _g_.m
+	casgstatus(gp, _Grunnable, _Grunning)
+	gp.waitsince = 0
+	gp.preempt = false
+	gp.stackguard0 = gp.stack.lo + _StackGuard
+	if !inheritTime {
+		_g_.m.p.ptr().schedtick++
+	}
+
+	// Check whether the profiler needs to be turned on or off.
+	hz := sched.profilehz
+	if _g_.m.profilehz != hz {
+		setThreadCPUProfiler(hz)
+	}
+
+	if trace.enabled {
+		// GoSysExit has to happen when we have a P, but before GoStart.
+		// So we emit it here.
+		if gp.syscallsp != 0 && gp.sysblocktraced {
+			traceGoSysExit(gp.sysexitticks)
+		}
+		traceGoStart()
+	}
+
+	gogo(&gp.sched)
+}
+
+
+
+// Finishes execution of the current goroutine.
+func goexit1() {
+	if raceenabled {
+		racegoend()
+	}
+	if trace.enabled {
+		traceGoEnd()
+	}
+	mcall(goexit0)
+}
+
+// mcall从用户g切换到g0并调用fn
+// mcall保存当前g的pc和sp在g->sched等待将来恢复，由fn来安排稍后的执行，通常是通过记录
+// 数据结构中的g，导致稍后调用ready（g）。
+// mcall稍后返回原始的g，当g呗重新调度，fn必须没有返回，通常通过调用schedule结束，让m运行其他groutine
+// This must NOT be go:noescape: if fn is a stack-allocated closure,
+// fn puts g on a run queue, and g executes before fn returns, the
+// closure will be invalidated while it is still executing.
+func mcall(fn func(*g))
+// goexit continuation on g0.
+func goexit0(gp *g) {
+	_g_ := getg()
+
+	casgstatus(gp, _Grunning, _Gdead)
+	if isSystemGoroutine(gp, false) {
+		atomic.Xadd(&sched.ngsys, -1)
+	}
+	gp.m = nil
+	locked := gp.lockedm != 0
+	gp.lockedm = 0
+	_g_.m.lockedg = 0
+	gp.preemptStop = false
+	gp.paniconfault = false
+	gp._defer = nil // should be true already but just in case.
+	gp._panic = nil // non-nil for Goexit during panic. points at stack-allocated data.
+	gp.writebuf = nil
+	gp.waitreason = 0
+	gp.param = nil
+	gp.labels = nil
+	gp.timer = nil
+
+	if gcBlackenEnabled != 0 && gp.gcAssistBytes > 0 {
+		// Flush assist credit to the global pool. This gives
+		// better information to pacing if the application is
+		// rapidly creating an exiting goroutines.
+		scanCredit := int64(gcController.assistWorkPerByte * float64(gp.gcAssistBytes))
+		atomic.Xaddint64(&gcController.bgScanCredit, scanCredit)
+		gp.gcAssistBytes = 0
+	}
+
+	dropg()
+
+	if GOARCH == "wasm" { // no threads yet on wasm
+		gfput(_g_.m.p.ptr(), gp)
+		schedule() // never returns
+	}
+
+	if _g_.m.lockedInt != 0 {
+		print("invalid m->lockedInt = ", _g_.m.lockedInt, "\n")
+		throw("internal lockOSThread error")
+	}
+	gfput(_g_.m.p.ptr(), gp)
+	if locked {
+		// The goroutine may have locked this thread because
+		// it put it in an unusual kernel state. Kill it
+		// rather than returning it to the thread pool.
+
+		// Return to mstart, which will release the P and exit
+		// the thread.
+		if GOOS != "plan9" { // See golang.org/issue/22227.
+			gogo(&_g_.m.g0.sched)
+		} else {
+			// Clear lockedExt on plan9 since we may end up re-using
+			// this thread.
+			_g_.m.lockedExt = 0
+		}
+	}
+	schedule()
+}
+
+//由于直接进行系统调用会阻塞当前的线程，所以只有可以立刻返回的系统调用才可能会被设置成 RawSyscall 类型，例如：SYS_EPOLL_CREATE、SYS_EPOLL_WAIT（超时时间为 0）、SYS_TIME 等。
+
+// Standard syscall entry used by the go syscall library and normal cgo calls.
+//
+// This is exported via linkname to assembly in the syscall package.
+//
+//go:nosplit
+//go:linkname entersyscall
+func entersyscall() {
+	reentersyscall(getcallerpc(), getcallersp())
+}
+// The goroutine g is about to enter a system call.
+// Record that it's not using the cpu anymore.
+// This is called only from the go syscall library and cgocall,
+// not from the low-level system calls used by the runtime.
+//
+// Entersyscall cannot split the stack: the gosave must
+// make g->sched refer to the caller's stack segment, because
+// entersyscall is going to return immediately after.
+//
+// Nothing entersyscall calls can split the stack either.
+// We cannot safely move the stack during an active call to syscall,
+// because we do not know which of the uintptr arguments are
+// really pointers (back into the stack).
+// In practice, this means that we make the fast path run through
+// entersyscall doing no-split things, and the slow path has to use systemstack
+// to run bigger things on the system stack.
+//
+// reentersyscall is the entry point used by cgo callbacks, where explicitly
+// saved SP and PC are restored. This is needed when exitsyscall will be called
+// from a function further up in the call stack than the parent, as g->syscallsp
+// must always point to a valid stack frame. entersyscall below is the normal
+// entry point for syscalls, which obtains the SP and PC from the caller.
+//
+// Syscall tracing:
+// At the start of a syscall we emit traceGoSysCall to capture the stack trace.
+// If the syscall does not block, that is it, we do not emit any other events.
+// If the syscall blocks (that is, P is retaken), retaker emits traceGoSysBlock;
+// when syscall returns we emit traceGoSysExit and when the goroutine starts running
+// (potentially instantly, if exitsyscallfast returns true) we emit traceGoStart.
+// To ensure that traceGoSysExit is emitted strictly after traceGoSysBlock,
+// we remember current value of syscalltick in m (_g_.m.syscalltick = _g_.m.p.ptr().syscalltick),
+// whoever emits traceGoSysBlock increments p.syscalltick afterwards;
+// and we wait for the increment before emitting traceGoSysExit.
+// Note that the increment is done even if tracing is not enabled,
+// because tracing can be enabled in the middle of syscall. We don't want the wait to hang.
+//
+//go:nosplit
+func reentersyscall(pc, sp uintptr) {
+	_g_ := getg()
+
+	// Disable preemption because during this function g is in Gsyscall status,
+	// but can have inconsistent g->sched, do not let GC observe it.
+	_g_.m.locks++
+
+	// Entersyscall must not call any function that might split/grow the stack.
+	// (See details in comment above.)
+	// Catch calls that might, by replacing the stack guard with something that
+	// will trip any stack check and leaving a flag to tell newstack to die.
+	_g_.stackguard0 = stackPreempt
+	_g_.throwsplit = true
+
+	// Leave SP around for GC and traceback.
+	save(pc, sp)
+	_g_.syscallsp = sp
+	_g_.syscallpc = pc
+	casgstatus(_g_, _Grunning, _Gsyscall)
+	if _g_.syscallsp < _g_.stack.lo || _g_.stack.hi < _g_.syscallsp {
+		systemstack(func() {
+			print("entersyscall inconsistent ", hex(_g_.syscallsp), " [", hex(_g_.stack.lo), ",", hex(_g_.stack.hi), "]\n")
+			throw("entersyscall")
+		})
+	}
+
+	if trace.enabled {
+		systemstack(traceGoSysCall)
+		// systemstack itself clobbers g.sched.{pc,sp} and we might
+		// need them later when the G is genuinely blocked in a
+		// syscall
+		save(pc, sp)
+	}
+
+	if atomic.Load(&sched.sysmonwait) != 0 {
+		systemstack(entersyscall_sysmon)
+		save(pc, sp)
+	}
+
+	if _g_.m.p.ptr().runSafePointFn != 0 {
+		// runSafePointFn may stack split if run on this stack
+		systemstack(runSafePointFn)
+		save(pc, sp)
+	}
+
+	_g_.m.syscalltick = _g_.m.p.ptr().syscalltick
+	_g_.sysblocktraced = true
+	pp := _g_.m.p.ptr()
+	pp.m = 0
+	_g_.m.oldp.set(pp)
+	_g_.m.p = 0
+	atomic.Store(&pp.status, _Psyscall)
+	if sched.gcwaiting != 0 {
+		systemstack(entersyscall_gcwait)
+		save(pc, sp)
+	}
+
+	_g_.m.locks--
+}
+
+我们在设计原理中介绍过了 Go 语言基于协作式和信号的两种抢占式调度，这里主要介绍其中的协作式调度。runtime.Gosched 函数会主动让出处理器，允许其他 Goroutine 运行。该函数无法挂起 Goroutine，调度器会在可能会将当前 Goroutine 调度到其他线程上：
+// Gosched yields the processor, allowing other goroutines to run. It does not
+// suspend the current goroutine, so execution resumes automatically.
+func Gosched() {
+	checkTimeouts()
+	mcall(gosched_m)
+}
 ```
+

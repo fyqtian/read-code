@@ -262,6 +262,8 @@ func mstart1() {
 	// for terminating the thread.
 	// We're never coming back to mstart1 after we call schedule,
 	// so other calls can reuse the current frame.
+    // 记录当前调用者的栈顶
+    //
 	save(getcallerpc(), getcallersp())
 	asminit()
 	minit()
