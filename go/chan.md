@@ -786,3 +786,100 @@ sclose:
 	panic(plainError("send on closed channel"))
 }
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```go
+// Puts the current goroutine into a waiting state and calls unlockf.
+// If unlockf returns false, the goroutine is resumed.
+// unlockf must not access this G's stack, as it may be moved between
+// the call to gopark and the call to unlockf.
+// Reason explains why the goroutine has been parked.
+// It is displayed in stack traces and heap dumps.
+// Reasons should be unique and descriptive.
+// Do not re-use reasons, add new ones.
+func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason waitReason, traceEv byte, traceskip int) {
+   if reason != waitReasonSleep {
+      checkTimeouts() // timeouts may expire while two goroutines keep the scheduler busy
+   }
+   mp := acquirem()
+   gp := mp.curg
+   status := readgstatus(gp)
+   if status != _Grunning && status != _Gscanrunning {
+      throw("gopark: bad g status")
+   }
+   mp.waitlock = lock
+   mp.waitunlockf = unlockf
+   gp.waitreason = reason
+   mp.waittraceev = traceEv
+   mp.waittraceskip = traceskip
+   releasem(mp)
+   // can't do anything that might move the G between Ms here.
+    // 切换到g0执行park_m
+   mcall(park_m)
+}
+
+park_m首先把当前goroutine的状态设置为_Gwaiting（因为它正在等待其它goroutine往channel里面写数据），然后调用dropg函数解除g和m之间的关系，最后通过调用schedule函数进入调度循环，schedule函数我们也详细分析过，它首先会从运行队列中挑选出一个goroutine，然后调用gogo函数切换到被挑选出来的goroutine去运行。因为main goroutine在读取channel被阻塞之前已经把创建好的g2放入了运行队列，所以在这里schedule会把g2调度起来运行，这里完成了一次从main goroutine到g2调度（我们假设只有一个工作线程在进行调度）。
+
+func park_m(gp *g) {
+    //g0
+	_g_ := getg()
+	//阻塞的g状态变为waiting	
+	casgstatus(gp, _Grunning, _Gwaiting)
+    //解除g和m关系
+	dropg()
+
+	if fn := _g_.m.waitunlockf; fn != nil {
+		ok := fn(gp, _g_.m.waitlock)
+		_g_.m.waitunlockf = nil
+		_g_.m.waitlock = nil
+        //执行失败 状态变更回来 继续执行g (那些场景)?
+		if !ok {
+			casgstatus(gp, _Gwaiting, _Grunnable)
+			execute(gp, true) // Schedule it back, never returns.
+		}
+	}
+    //调度
+	schedule()
+}
+
+
+func goready(gp *g, traceskip int) {
+	systemstack(func() {
+		ready(gp, traceskip, true)
+	})
+}
+
+// Mark gp ready to run.
+func ready(gp *g, traceskip int, next bool) {
+	
+	status := readgstatus(gp)
+	
+	// Mark runnable.
+	_g_ := getg() //g0
+	mp := acquirem() // disable preemption because it can be holding p in a local var
+	if status&^_Gscan != _Gwaiting {
+		dumpgstatus(gp)
+		throw("bad g->status in ready")
+	}
+
+	// status is Gwaiting or Gscanwaiting, make Grunnable and put on runq
+    // 状态变为待运行
+	casgstatus(gp, _Gwaiting, _Grunnable)
+    //放到待运行队列
+	runqput(_g_.m.p.ptr(), gp, next)
+    //有空闲的p而且没有正在偷取goroutine的工作线程，则需要唤醒p出来工作
+	wakep()
+	releasem(mp)
+}
+```
