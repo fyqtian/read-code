@@ -6,9 +6,7 @@ https://mp.weixin.qq.com/mp/homepage?__biz=MzU1OTg5NDkzOA==&hid=1&sn=8fc2b63f535
 
 https://www.cnblogs.com/flhs/p/12677335.html
 
-
-
-gdb execfile
+https://www.cnblogs.com/flhs/p/12510178.htmlexecfile
 
 找到entrypoint
 
@@ -293,6 +291,16 @@ func osinit() {
 // make & queue new G
 // call runtime·mstart
 // 新的G调用runtime.main
+
+我们从环境变量 GOMAXPROCS 获取了程序能够同时运行的最大处理器数之后就会调用 runtime.procresize 更新程序中处理器的数量，在这时整个程序不会执行任何用户 Goroutine，调度器也会进入锁定状态，runtime.procresize 的执行过程如下：
+
+如果全局变量 allp 切片中的处理器数量少于期望数量，会对切片进行扩容；
+使用 new 创建新的处理器结构体并调用 runtime.p.init 初始化刚刚扩容的处理器；
+通过指针将线程 m0 和处理器 allp[0] 绑定到一起；
+调用 runtime.p.destroy 释放不再使用的处理器结构；
+通过截断改变全局变量 allp 的长度保证与期望处理器数量相等；
+将除 allp[0] 之外的处理器 P 全部设置成 _Pidle 并加入到全局的空闲队列中；
+调用 runtime.procresize 是调度器启动的最后一步，在这一步过后调度器会完成相应数量处理器的启动，等待用户创建运行新的 Goroutine 并为 Goroutine 调度处理器资源。
 func schedinit() {
    lockInit(&sched.lock, lockRankSched)
    lockInit(&sched.sysmonlock, lockRankSysmon)

@@ -1,4 +1,10 @@
-### time.Ticket
+### time
+
+https://draveness.me/golang/docs/part3-runtime/ch06-concurrency/golang-timer/#%E8%BF%90%E8%A1%8C%E8%AE%A1%E6%97%B6%E5%99%A8
+
+
+
+http://xiaorui.cc/archives/6483
 
 ```go
 func main() {
@@ -111,12 +117,13 @@ func addtimer(t *timer) {
     //当前P
 	pp := getg().m.p.ptr()
 	lock(&pp.timersLock)
-    //清晰timer堆
+    //清理timer堆
 	cleantimers(pp)
     //timer加入堆
 	doaddtimer(pp, t)
 	unlock(&pp.timersLock)
 	//唤醒网络轮询器中休眠的线程
+    当新添加的定时任务when小于netpoll等待的时间，那么wakeNetPoller会激活NetPoll的等待。激活的方法很简单，在findrunnable里的最后会使用超时阻塞的方法调用epollwait，这样既可监控了epfd红黑树上的fd，又可兼顾最近的定时任务的等待。
 	wakeNetPoller(when)
 }
 
@@ -499,6 +506,9 @@ loop:
 // The caller must have locked the timers for pp.
 // If a timer is run, this will temporarily unlock the timers.
 //go:systemstack
+
+
+schedule findrunableg checktimer会调用
 func runtimer(pp *p, now int64) int64 {
 	for {
 		t := pp.timers[0]
@@ -565,33 +575,155 @@ func runtimer(pp *p, now int64) int64 {
 }
 
 
+    
+
+```
 
 
-runtime.checkTimers 是调度器用来运行处理器中计时器的函数，它会在发生以下情况时被调用：
 
-调度器调用 runtime.schedule 执行调度时；
-调度器调用 runtime.findrunnable 获取可执行的 Goroutine 时；
-调度器调用 runtime.findrunnable 从其他处理器窃取计时器时；
 
+
+## 触发计时器 
+
+- 调度器调度时会检查处理器中的计时器是否准备就绪；
+- 系统监控会检查是否有未执行的到期计时器；
+
+[`runtime.checkTimers`](https://draveness.me/golang/tree/runtime.checkTimers) 是调度器用来运行处理器中计时器的函数，它会在发生以下情况时被调用：
+
+- 调度器调用 [`runtime.schedule`](https://draveness.me/golang/tree/runtime.schedule) 执行调度时；
+- 调度器调用 [`runtime.findrunnable`](https://draveness.me/golang/tree/runtime.findrunnable) 获取可执行的 Goroutine 时；
+- 调度器调用 [`runtime.findrunnable`](https://draveness.me/golang/tree/runtime.findrunnable) 从其他处理器窃取计时器时；
+
+
+
+```go
+// checkTimers runs any timers for the P that are ready.
+// If now is not 0 it is the current time.
+// It returns the current time or 0 if it is not known,
+// and the time when the next timer should run or 0 if there is no next timer,
+// and reports whether it ran any timers.
+// If the time when the next timer should run is not 0,
+// it is always larger than the returned time.
+// We pass now in and out to avoid extra calls of nanotime.
+//go:yeswritebarrierrec
+
+如果处理器中不存在需要调整的计时器；
+当没有需要执行的计时器时，直接返回；
+当下一个计时器没有到期并且需要删除的计时器较少时都会直接返回；
+如果处理器中存在需要调整的计时器，会调用 runtime.adjusttimers
+
+调整了堆中的计时器之后，会通过 runtime.runtimer 依次查找堆中是否存在需要执行的计时器：
+
+如果存在，直接运行计时器；
+如果不存在，获取最新计时器的触发时间；
+
+在 runtime.checkTimers 的最后，如果当前 Goroutine 的处理器和传入的处理器相同，并且处理器中删除的计时器是堆中计时器的 1/4 以上，就会调用 runtime.clearDeletedTimers 删除处理器全部被标记为 timerDeleted 的计时器，保证堆中靠后的计时器被删除。
+
+runtime.clearDeletedTimers 能够避免堆中出现大量长时间运行的计时器，该函数和 runtime.moveTimers 也是唯二会遍历计时器堆的函数。
 func checkTimers(pp *p, now int64) (rnow, pollUntil int64, ran bool) {
-	if atomic.Load(&pp.adjustTimers) == 0 {
-		next := int64(atomic.Load64(&pp.timer0When))
-		if next == 0 {
-			return now, 0, false
+   // If there are no timers to adjust, and the first timer on
+   // the heap is not yet ready to run, then there is nothing to do.
+   if atomic.Load(&pp.adjustTimers) == 0 {
+      next := int64(atomic.Load64(&pp.timer0When))
+      if next == 0 {
+         return now, 0, false
+      }
+      if now == 0 {
+         now = nanotime()
+      }
+      if now < next {
+         // Next timer is not ready to run.
+         // But keep going if we would clear deleted timers.
+         // This corresponds to the condition below where
+         // we decide whether to call clearDeletedTimers.
+         if pp != getg().m.p.ptr() || int(atomic.Load(&pp.deletedTimers)) <= int(atomic.Load(&pp.numTimers)/4) {
+            return now, next, false
+         }
+      }
+   }
+
+   lock(&pp.timersLock)
+
+   adjusttimers(pp)
+
+   rnow = now
+   if len(pp.timers) > 0 {
+      if rnow == 0 {
+         rnow = nanotime()
+      }
+      for len(pp.timers) > 0 {
+         // Note that runtimer may temporarily unlock
+         // pp.timersLock.
+         if tw := runtimer(pp, rnow); tw != 0 {
+            if tw > 0 {
+               pollUntil = tw
+            }
+            break
+         }
+         ran = true
+      }
+   }
+
+   // If this is the local P, and there are a lot of deleted timers,
+   // clear them out. We only do this for the local P to reduce
+   // lock contention on timersLock.
+   if pp == getg().m.p.ptr() && int(atomic.Load(&pp.deletedTimers)) > len(pp.timers)/4 {
+      clearDeletedTimers(pp)
+   }
+
+   unlock(&pp.timersLock)
+
+   return rnow, pollUntil, ran
+}
+
+
+/ runOneTimer runs a single timer.
+// The caller must have locked the timers for pp.
+// This will temporarily unlock the timers while running the timer function.
+//go:systemstack
+    
+根据计时器的 period 字段，上述函数会做出不同的处理：
+
+如果 period 字段大于 0；
+修改计时器下一次触发的时间并更新其在堆中的位置；
+将计时器的状态更新至 timerWaiting；
+调用 runtime.updateTimer0When 函数设置处理器的 timer0When 字段；
+如果 period 字段小于或者等于 0；
+调用 runtime.dodeltimer0 函数删除计时器；
+将计时器的状态更新至 timerNoStatus；
+更新计时器之后，上述函数会运行计时器中存储的函数并传入触发时间等参数。
+func runOneTimer(pp *p, t *timer, now int64) {
+
+	//定时器 回调方法
+	f := t.f
+	arg := t.arg
+	seq := t.seq
+
+	if t.period > 0 {
+		// Leave in heap but adjust next time to fire.
+		delta := t.when - now
+		t.when += t.period * (1 + -delta/t.period)
+        // 重排定时器
+		siftdownTimer(pp.timers, 0)
+		if !atomic.Cas(&t.status, timerRunning, timerWaiting) {
+			badTimer()
 		}
-		if now == 0 {
-			now = nanotime()
-		}
-		if now < next {
-			if pp != getg().m.p.ptr() || int(atomic.Load(&pp.deletedTimers)) <= int(atomic.Load(&pp.numTimers)/4) {
-				return now, next, false
-			}
+		updateTimer0When(pp)
+	} else {
+		// Remove from heap.
+		dodeltimer0(pp)
+		if !atomic.Cas(&t.status, timerRunning, timerNoStatus) {
+			badTimer()
 		}
 	}
-
+	unlock(&pp.timersLock)
+	//调用方法
+	f(arg, seq)
 	lock(&pp.timersLock)
-	adjusttimers(pp)
 }
+
+
+
 
 系统监控 #
 系统监控函数 runtime.sysmon 也可能会触发函数的计时器，下面的代码片段中省略了大量与计时器无关的代码：
@@ -616,10 +748,5 @@ func sysmon() {
 			startm(nil, false)
 		}
 		...
-}func sysm
+}
 ```
-
-
-
-
-

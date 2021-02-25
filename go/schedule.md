@@ -124,6 +124,16 @@ G退出系统调用的过程非常复杂：runtime先会尝试获取空闲局部
 
 最后，已经是Gdead状态的G是可以被重新初始化并使用的(从自由G队列取出来重新初始化使用)。而对比进入Pdead状态的P等待的命运只有被销毁。处于Gdead的G会被放置到本地P或者调度器的自由G列表中。
 
+_Gidle	刚刚被分配并且还没有被初始化
+_Grunnable	没有执行代码，没有栈的所有权，存储在运行队列中
+_Grunning	可以执行代码，拥有栈的所有权，被赋予了内核线程 M 和处理器 P
+_Gsyscall	正在执行系统调用，拥有栈的所有权，没有执行用户代码，被赋予了内核线程 M 但是不在运行队列上
+_Gwaiting	由于运行时而被阻塞，没有执行用户代码并且不在运行队列上，但是可能存在于 Channel 的等待队列上
+_Gdead	没有被使用，没有执行代码，可能有分配的栈
+_Gcopystack	栈正在被拷贝，没有执行代码，不在运行队列上
+_Gpreempted	由于抢占而被阻塞，没有执行用户代码并且不在运行队列上，等待唤醒
+_Gscan	GC 正在扫描栈空间，没有执行代码，可以与其他状态同时存在
+
 type g struct {
 	// Stack parameters.
 	// stack describes the actual stack memory: [stack.lo, stack.hi).
@@ -132,28 +142,28 @@ type g struct {
 	// stackguard1 is the stack pointer compared in the C stack growth prologue.
 	// It is stack.lo+StackGuard on g0 and gsignal stacks.
 	// It is ~0 on other goroutine stacks, to trigger a call to morestackc (and crash).
-	stack       stack   // offset known to runtime/cgo
-	stackguard0 uintptr // offset known to liblink
+	stack       stack   // 当前 Goroutine 的栈内存范围 [stack.lo, stack.hi)
+	stackguard0 uintptr // 用于调度器抢占式调度
 	stackguard1 uintptr // offset known to liblink
 
 	_panic       *_panic // innermost panic - offset known to liblink
 	_defer       *_defer // innermost defer
-	m            *m      // current m; offset known to arm liblink
-	sched        gobuf
+	m            *m      // 当前 Goroutine 占用的线程，可能为空
+	sched        gobuf  //存储 Goroutine 的调度相关的数据 上下文
 	syscallsp    uintptr        // if status==Gsyscall, syscallsp = sched.sp to use during gc
 	syscallpc    uintptr        // if status==Gsyscall, syscallpc = sched.pc to use during gc
 	stktopsp     uintptr        // expected sp at top of stack, to check in traceback
 	param        unsafe.Pointer // passed parameter on wakeup
-	atomicstatus uint32
+	atomicstatus uint32  //Goroutine 的状态
 	stackLock    uint32 // sigprof/scang lock; TODO: fold in to atomicstatus
 	goid         int64
 	schedlink    guintptr
 	waitsince    int64      // approx time when the g become blocked
 	waitreason   waitReason // if status==Gwaiting
 
-	preempt       bool // preemption signal, duplicates stackguard0 = stackpreempt
-	preemptStop   bool // transition to _Gpreempted on preemption; otherwise, just deschedule
-	preemptShrink bool // shrink stack at synchronous safe point
+	preempt       bool // preemption signal, duplicates stackguard0 = stackpreempt   抢占信号
+	preemptStop   bool // transition to _Gpreempted on preemption; otherwise, just deschedule  抢占时将状态修改成 `_Gpreempted`
+	preemptShrink bool // shrink stack at synchronous safe point 在同步安全点收缩栈
 
 	// asyncSafePoint is set if g is stopped at an asynchronous
 	// safe point. This means there are frames on the stack
@@ -213,7 +223,7 @@ type m struct {
         2.  普通的Goroutine栈是在Heap分配的可增长的stack,而g0的stack是M对应的线程栈。
         3.  所有与调度相关的代码,都会先切换到g0的栈再执行。
     */
-	g0      *g     // 线程栈
+	g0      *g     //  g0 是持有调度栈的 Goroutine，
 	morebuf gobuf  // gobuf arg to morestack
 	divmod  uint32 // div/mod denominator for arm - known to liblink
 
@@ -224,11 +234,11 @@ type m struct {
 	sigmask       sigset       // storage for saved signal mask
 	tls           [6]uintptr   // thread-local storage (for x86 extern register)
 	mstartfn      func()   // 表示M的起始函数。其实就是我们 go 语句携带的那个函数。
-	curg          *g       // M中当前运行的goroutine
+	curg          *g       // 是在当前线程上运行的用户 Goroutine
 	caughtsig     guintptr // goroutine running during fatal signal
 	p             puintptr //与m绑定的p如果为nil表示空闲
 	nextp         puintptr // 用于暂存于当前M有潜在关联的P。 （预联）当M重新启动时，即用预联的这个P做关联啦
-	oldp          puintptr // the p that was attached before executing a syscall
+	oldp          puintptr // 执行系统调用之前使用线程的处理器 oldp
 	id            int64
 	mallocing     int32
 	throwing      int32
@@ -1366,6 +1376,10 @@ func runqget(_p_ *p) (gp *g, inheritTime bool) {
 // If next is true, runqput puts g in the _p_.runnext slot.
 // If the run queue is full, runnext puts g on the global queue.
 // Executed only by the owner P.
+runtime.runqput 会将 Goroutine 放到运行队列上，这既可能是全局的运行队列，也可能是处理器本地的运行队列：
+当 next 为 true 时，将 Goroutine 设置到处理器的 runnext 作为下一个处理器执行的任务；
+当 next 为 false 并且本地运行队列还有剩余空间时，将 Goroutine 加入处理器持有的本地运行队列；
+当处理器的本地运行队列已经没有剩余空间时就会把本地队列中的一部分 Goroutine 和待加入的 Goroutine 通过 runtime.runqputslow 添加到调度器持有的全局运行队列上
 func runqput(_p_ *p, gp *g, next bool) {
 	if randomizeScheduler && next && fastrand()%2 == 0 {
 		next = false
@@ -1465,6 +1479,12 @@ func runqputslow(_p_ *p, gp *g, h, t uint32) bool {
 
 
 第二点，**盗取算法**。盗取过程用了两个嵌套for循环。内层循环实现了盗取逻辑，从代码可以看出盗取的实质就是遍历allp中的所有p，查看其运行队列是否有goroutine，如果有，则取其一半到当前工作线程的运行队列，然后从findrunnable返回，如果没有则继续遍历下一个p。**但这里为了保证公平性，遍历allp时并不是固定的从allp[0]即第一个p开始，而是从随机位置上的p开始，而且遍历的顺序也随机化了，并不是现在访问了第i个p下一次就访问第i+1个p，而是使用了一种伪随机的方式遍历allp中的每个p，防止每次遍历时使用同样的顺序访问allp中的元素**。下面是这个算法的伪代码：
+
+
+
+
+
+
 
 ```go
 // Finds a runnable goroutine to execute.

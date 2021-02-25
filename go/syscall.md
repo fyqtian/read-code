@@ -225,6 +225,12 @@ func entersyscall() {
 // because tracing can be enabled in the middle of syscall. We don't want the wait to hang.
 //
 //go:nosplit
+禁止线程上发生的抢占，防止出现内存不一致的问题；
+保证当前函数不会触发栈分裂或者增长；
+保存当前的程序计数器 PC 和栈指针 SP 中的内容；
+将 Goroutine 的状态更新至 _Gsyscall；
+将 Goroutine 的处理器和线程暂时分离并更新处理器的状态到 _Psyscall；
+释放当前线程上的锁；
 func reentersyscall(pc, sp uintptr) {
 	_g_ := getg() //用户g
 
@@ -236,7 +242,7 @@ func reentersyscall(pc, sp uintptr) {
 	// (See details in comment above.)
 	// Catch calls that might, by replacing the stack guard with something that
 	// will trip any stack check and leaving a flag to tell newstack to die.
-	_g_.stackguard0 = stackPreempt
+	_g_.stackguard0 = stackPreempt   //抢占标记
 	_g_.throwsplit = true
 
 	// Leave SP around for GC and traceback.

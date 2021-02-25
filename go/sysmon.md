@@ -6,6 +6,10 @@ https://mp.weixin.qq.com/s?__biz=MzU1OTg5NDkzOA==&mid=2247483835&idx=1&sn=ce6927
 
 https://mp.weixin.qq.com/s?__biz=MzU1OTg5NDkzOA==&mid=2247483840&idx=1&sn=f2d7a78c190ff6ffce829c8938e50fe7&scene=19#wechat_redirect
 
+
+
+http://xiaorui.cc/archives/6535 信号抢占
+
 ```go
 func main() {
         ......
@@ -315,6 +319,44 @@ type sysmontick struct {
 	//当处理器的运行队列不为空或者不存在空闲处理器时
 	//当系统调用时间超过了 10ms 
 //系统监控通过在循环中抢占处理器来避免同一个 Goroutine 占用线程太长时间造成饥饿问题。
+
+
+协作的抢占式调度。
+
+编译器会在调用函数前插入 runtime.morestack；
+Go 语言运行时会在垃圾回收暂停程序、系统监控发现 Goroutine 运行超过 10ms 时发出抢占请求 StackPreempt；
+当发生函数调用时，可能会执行编译器插入的 runtime.morestack，它调用的 runtime.newstack 会检查 Goroutine 的 stackguard0 字段是否为 StackPreempt；
+如果 stackguard0 是 StackPreempt，就会触发抢占让出当前线程；
+
+
+非协作的抢占式调度
+挂起 Goroutine 的过程是在垃圾回收的栈扫描时完成的，我们通过 runtime.suspendG 和 runtime.resumeG 两个函数重构栈扫描这一过程；
+调用 runtime.suspendG 时会将处于运行状态的 Goroutine 的 preemptStop 标记成 true；
+调用 runtime.preemptPark 可以挂起当前 Goroutine、将其状态更新成 _Gpreempted 并触发调度器的重新调度，该函数能够交出线程控制权
+在 x86 架构上增加异步抢占的函数 runtime.asyncPreempt 和 runtime.asyncPreempt2；
+支持通过向线程发送信号的方式暂停运行的 Goroutine；
+在 runtime.sighandler 函数中注册 SIGURG 信号的处理函数 runtime.doSigPreempt；
+实现 runtime.preemptM，它可以通过 SIGURG 信号向线程发送抢占请求；
+目前的抢占式调度也只会在垃圾回收扫描任务时触发，我们可以梳理一下上述代码实现的抢占式调度过程：
+
+程序启动时，在 runtime.sighandler 中注册 SIGURG 信号的处理函数 runtime.doSigPreempt；
+在触发垃圾回收的栈扫描时会调用 runtime.suspendG 挂起 Goroutine，该函数会执行下面的逻辑：
+将 _Grunning 状态的 Goroutine 标记成可以被抢占，即将 preemptStop 设置成 true；
+调用 runtime.preemptM 触发抢占；
+runtime.preemptM 会调用 runtime.signalM 向线程发送信号 SIGURG；
+操作系统会中断正在运行的线程并执行预先注册的信号处理函数 runtime.doSigPreempt；
+runtime.doSigPreempt 函数会处理抢占信号，获取当前的 SP 和 PC 寄存器并调用 runtime.sigctxt.pushCall；
+runtime.sigctxt.pushCall 会修改寄存器并在程序回到用户态时执行 runtime.asyncPreempt；
+汇编指令 runtime.asyncPreempt 会调用运行时函数 runtime.asyncPreempt2；
+runtime.asyncPreempt2 会调用 runtime.preemptPark；
+runtime.preemptPark 会修改当前 Goroutine 的状态到 _Gpreempted 并调用 runtime.schedule 让当前函数陷入休眠并让出线程，调度器会选择其它的 Goroutine 继续执行；
+
+该信号需要被调试器透传；
+该信号不会被内部的 libc 库使用并拦截；
+该信号可以随意出现并且不触发任何后果；
+我们需要处理多个平台上的不同信号；
+STW 和栈扫描是一个可以抢占的安全点（Safe-points），所以 Go 语言会在这里先加入抢占功能8。基于信号的抢占式调度只解决了垃圾回收和栈扫描时存在的问题，它到目前为止没有解决所有问题，但是这种真抢占式调度是调度器走向完备的开始，相信在未来我们会在更多的地方触发抢占。
+
 func retake(now int64) uint32 {
 	n := 0
 	// Prevent allp slice changes. This lock will be completely
