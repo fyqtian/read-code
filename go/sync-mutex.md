@@ -1,5 +1,7 @@
  sync.Mutex
 
+https://mp.weixin.qq.com/s/7OZ8lmkiQU16884owQR-fw 信号量
+
 ```go
 //example
 func main() {
