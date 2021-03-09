@@ -100,10 +100,6 @@ func (wg *WaitGroup) Wait() {
         //当前没counter
 		if v == 0 {
 			// Counter is 0, no need to wait.
-			if race.Enabled {
-				race.Enable()
-				race.Acquire(unsafe.Pointer(wg))
-			}
 			return
 		}
 		//waiter数量+1

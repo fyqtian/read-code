@@ -260,10 +260,10 @@ func mapaccess1(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer {
 			b = oldb
 		}
 	}
-    //计算高8位
+    //计算高8位 一个byte
 	top := tophash(hash)
 bucketloop:
-    //从当前桶找到溢出桶知道nil
+    //从当前桶找到溢出桶直到Nil
 	for ; b != nil; b = b.overflow(t) {
         //bucketCnt = 8
 		for i := uintptr(0); i < bucketCnt; i++ {
@@ -275,7 +275,7 @@ bucketloop:
 				}
 				continue
 			}
-            //找到key
+            //找到相同的top 比对key
 			k := add(unsafe.Pointer(b), dataOffset+i*uintptr(t.keysize))
             // 如果是指针
 			if t.indirectkey() {
@@ -291,6 +291,7 @@ bucketloop:
 				}
 				return e
 			}
+            //比对key失败 下一轮
 		}
 	}
 	return unsafe.Pointer(&zeroVal[0])
