@@ -74,7 +74,7 @@ type hmap struct {
 	hash0     uint32 // 哈希种子
 	buckets    unsafe.Pointer // array of 2^B Buckets. 桶地址
 	oldbuckets unsafe.Pointer // 旧桶地址 当前桶/2
-	nevacuate  uintptr        // progress counter for evacuation (buckets less than this have been evacuated)
+	nevacuate  uintptr        // //疏散进度计数器（小于此值的桶已疏散）
 
 	extra *mapextra // optional fields
 }
@@ -130,6 +130,10 @@ type maptype struct {
 }
 
 
+创建流程
+1. 先通过容量计算需要多少个桶B一个桶8个元素，
+	计算B 元素数量>8 && 元素数量/桶数量 > 6.5
+	如果B>=4就分配（b-4）个溢出桶，溢出桶和正常桶是连续的地址空间
 // makemap实现GO创建make(map[k]v,hint)
 // 如果编译器已经决定map第一个bucket可以创建在栈上，h或者bucket可能是非nil
 // 如果 h != nil map可以被h直接创建
@@ -223,7 +227,11 @@ func makeBucketArray(t *maptype, b uint8, dirtyalloc unsafe.Pointer) (buckets un
 	return buckets, nextOverflow
 }
 
-
+访问流程
+1.key hash定位到桶
+2.如果存在老桶判断是同等扩容还是增量扩容，如果是增量扩容 找到老桶位置 通过top[0]判断是否迁移完毕 如果未迁移在老桶里查找
+3.通过比对key的高8位和桶的top[8]，判断是否存在key，如果存在取桶内第几个位置的key再做比较如果相同返回，失败下一轮
+4.如果当前桶未找到，如果有溢出桶继续直到没有溢出桶。
 // m := map[k]v{}
 // val := m[key]
 // mapaccess1返回指向h[key]得指针，当key不在map时从不返回Nil, 相反会返回一个对应得空对象
@@ -342,6 +350,7 @@ again:
 	bucket := hash & bucketMask(h.B)
     // 如果老桶不为空 表示正在迁移
     // 每次迁移两个桶
+    //todo
 	if h.growing() {
 		growWork(t, h, bucket)
 	}
@@ -399,6 +408,7 @@ bucketloop:
 	// 当前得桶未找到可以存放key的位置，分配一个新的空间
 	// 如果我们达到最大负载系数或者我们有太多的溢出桶，并且我们并不在一个扩容中，开始扩容
     //装载因子已经超过 6.5；
+    //todo	
 	if !h.growing() && (overLoadFactor(h.count+1, h.B) || tooManyOverflowBuckets(h.noverflow, h.B)) {
 		hashGrow(t, h)
 		goto again // Growing the table invalidates everything, so try again
@@ -470,36 +480,41 @@ func (h *hmap) newoverflow(t *maptype, b *bmap) *bmap {
 }
 
 
-
+//扩容
 func hashGrow(t *maptype, h *hmap) {
 	// If we've hit the load factor, get bigger.
 	// Otherwise, there are too many overflow buckets,
 	// so keep the same number of buckets and "grow" laterally.
+    // 如果是负载因子太大就扩容 否则就是同等扩容
 	bigger := uint8(1)
 	if !overLoadFactor(h.count+1, h.B) {
 		bigger = 0
 		h.flags |= sameSizeGrow
 	}
+    //复制旧桶
 	oldbuckets := h.buckets
+    //创建新桶和溢出
 	newbuckets, nextOverflow := makeBucketArray(t, h.B+bigger, nil)
-
+	// 清空标记?
 	flags := h.flags &^ (iterator | oldIterator)
 	if h.flags&iterator != 0 {
 		flags |= oldIterator
 	}
 	// commit the grow (atomic wrt gc)
+    // 更新字段
 	h.B += bigger
 	h.flags = flags
 	h.oldbuckets = oldbuckets
 	h.buckets = newbuckets
-	h.nevacuate = 0
+	h.nevacuate = 0    //疏散进度计数器（小于此值的桶已疏散）
 	h.noverflow = 0
-
+	//如果溢出桶不为空
 	if h.extra != nil && h.extra.overflow != nil {
 		// Promote current overflow buckets to the old generation.
 		if h.extra.oldoverflow != nil {
 			throw("oldoverflow is not nil")
 		}
+        //溢出桶挂道旧的溢出桶字段上
 		h.extra.oldoverflow = h.extra.overflow
 		h.extra.overflow = nil
 	}
@@ -507,12 +522,26 @@ func hashGrow(t *maptype, h *hmap) {
 		if h.extra == nil {
 			h.extra = new(mapextra)
 		}
+        //挂上新的溢出桶
 		h.extra.nextOverflow = nextOverflow
 	}
 
 	// the actual copying of the hash table data is done incrementally
 	// by growWork() and evacuate().
 }
+
+1.如果在迁移状态，迁移两个桶
+2.定位到桶
+3.如果top[index] == emptyRest 说明后面已经没有key 跳出搜索循环，否则比对key如果相等移除key，value
+	当前top[index]=emptyOne
+	如果当前的index是桶最后一个元素，还存在溢出桶并且溢出桶的top[0] != emptyRest 结束
+	如果不是最后个元素判断下个元素是不是emptyRest，如果不是结束
+		当前top[index]=emptyRest
+4.
+
+
+
+
 
 // 删除key
 func mapdelete(t *maptype, h *hmap, key unsafe.Pointer) {
@@ -581,7 +610,7 @@ search:
 					goto notLast
 				}
 			} else {
-                // 当前不是最后一个桶 并且下个桶 也不是
+                // 当前不是最后一个桶 并且下个桶也不是
 				if b.tophash[i+1] != emptyRest {
 					goto notLast
 				}
