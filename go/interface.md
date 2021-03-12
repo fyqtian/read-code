@@ -80,6 +80,16 @@ func i(v interface{}) {
 
 
 
+
+
+
+
+<img src="..\images\20200119215421230.png" alt="20200119215421230" style="zoom: 25%;" />
+
+
+
+
+
 ```go
 //无接口
 type eface struct { // 16 字节
@@ -90,6 +100,25 @@ type eface struct { // 16 字节
 type iface struct { // 16 字节
 	tab  *itab
 	data unsafe.Pointer
+}
+
+type _type struct {
+	size       uintptr
+	ptrdata    uintptr // size of memory prefix holding all pointers 表明是否指针
+	hash       uint32
+	tflag      tflag
+	align      uint8
+	fieldAlign uint8
+	kind       uint8
+	// function for comparing objects of this type
+	// (ptr to object A, ptr to object B) -> ==?
+	equal func(unsafe.Pointer, unsafe.Pointer) bool
+	// gcdata stores the GC type data for the garbage collector.
+	// If the KindGCProg bit is set in kind, gcdata is a GC program.
+	// Otherwise it is a ptrmask bitmap. See mbitmap.go for details.
+	gcdata    *byte
+	str       nameOff
+	ptrToThis typeOff
 }
 
 type itab struct { // 32 字节
@@ -170,13 +199,15 @@ func convT2I(tab *itab, elem unsafe.Pointer) (i iface) {
 	return
 }
 
-
+//inter要转换的接口
+//i当前接口对象
 func assertI2I(inter *interfacetype, i iface) (r iface) {
 	tab := i.tab
 	if tab == nil {
 		// explicit conversions require non-nil interface value.
 		panic(&TypeAssertionError{nil, nil, &inter.typ, ""})
 	}
+    //如果比较成功 就认为是同类型 返回
 	if tab.inter == inter {
 		r.tab = tab
 		r.data = i.data
@@ -231,6 +262,10 @@ func panicdottypeE(have, want, iface *_type) {
 
 
 //接口转接口
+我们在判断一种类型是否满足某个接口时，Go 使用类型的方法集和接口所需要的方法集进行匹配，如果类型的方法集完全包含接口的方法集，则可认为该类型实现了该接口。
+比如：某个类型有 m 个方法，某个接口有 n 个方法，则很容易知道这种判定的时间复杂度为 O(mn)，Go 会对方法集的函数按照函数名的字典序进行排序，所以实际的时间复杂度为 O(m+n)。
+
+
 func convI2I(inter *interfacetype, i iface) (r iface) {
 	//inter要转换的接口
     //i目前实现的接口
@@ -252,6 +287,8 @@ func convI2I(inter *interfacetype, i iface) (r iface) {
 //inter待转换的类型
 //typ实际的数据类型
 //canfail是否可以转换失败
+getitab 函数会根据 interfacetype 和 _type 去全局的 itab 哈希表中查找，如果能找到，则直接返回；否则，会根据给定的 interfacetype 和 _type 新生成一个 itab，并插入到 itab 哈希表，这样下一次就可以直接拿到 itab。
+
 func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {
     //无效的inter
 	if len(inter.mhdr) == 0 {
@@ -333,3 +370,69 @@ func ca(int) {
 
 ```
 
+
+
+
+
+
+
+### 两个interface比较
+
+```go
+
+func main() {
+	var a interface{} = 2222
+	var b interface{} = 3333
+	_ = a == b
+}
+	0x0024 00036 (interface.go:4)	LEAQ	type.int(SB), AX
+	0x002b 00043 (interface.go:4)	MOVQ	AX, "".a+48(SP)   a+48 = type(int)
+	0x0030 00048 (interface.go:4)	LEAQ	""..stmp_0(SB), 
+	0x0037 00055 (interface.go:4)	MOVQ	AX, "".a+56(SP)   a+56 = &2222
+	0x003c 00060 (interface.go:5)	LEAQ	type.int(SB), AX
+	0x0043 00067 (interface.go:5)	MOVQ	AX, "".b+32(SP)   a+32 = type(int)
+	0x0048 00072 (interface.go:5)	LEAQ	""..stmp_1(SB), CX  
+	0x004f 00079 (interface.go:5)	MOVQ	CX, "".b+40(SP)    a+40 = &3333
+	0x0054 00084 (interface.go:6)	MOVQ	"".a+48(SP), CX   
+	0x0059 00089 (interface.go:6)	CMPQ	AX, CX           比较类型
+	0x005c 00092 (interface.go:6)	JEQ	98
+	。。。。
+	0x0062 00098 (interface.go:6)	MOVQ	"".a+48(SP), AX
+	0x0067 00103 (interface.go:6)	MOVQ	AX, (SP)
+	0x006b 00107 (interface.go:6)	MOVQ	"".a+56(SP), AX
+	0x0070 00112 (interface.go:6)	MOVQ	AX, 8(SP)
+	0x0075 00117 (interface.go:6)	MOVQ	"".b+40(SP), AX
+	0x007a 00122 (interface.go:6)	MOVQ	AX, 16(SP)
+	
+	0x007f 00127 (interface.go:6)	PCDATA	$1, $0
+	0x007f 00127 (interface.go:6)	NOP
+	0x0080 00128 (interface.go:6)	CALL	runtime.efaceeq(SB)  //比较实际值
+```
+
+
+
+
+
+动态派发的消耗
+
+因为转成接口类型变量会被**复制到堆上**，**在调用方法的时候会从堆复制到当前栈上，指针消耗相对小点，结构体消耗较大**
+
+```
+func convT2I(tab *itab, elem unsafe.Pointer) (i iface) {
+   t := tab._type
+
+	x := mallocgc(t.size, t, true)
+   //复制到堆上
+   typedmemmove(t, x, elem)
+   i.tab = tab
+   i.data = x
+   return
+}
+
+
+MOVQ	"".c+48(SP), AX                    ;; AX = iface(c).tab
+MOVQ	24(AX), AX                         ;; AX = iface(c).tab.fun[0] = Cat.Quack
+MOVQ	"".c+56(SP), CX                    ;; CX = iface(c).data
+MOVQ	CX, (SP)                           ;; SP = CX = &Cat{...}  拷贝到栈顶
+CALL	AX                                 ;; SP.Quack()
+```
