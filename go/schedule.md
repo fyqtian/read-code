@@ -77,7 +77,7 @@ https://www.cnblogs.com/flhs/p/12682881.html
 
 从上图我们可以看到，**除了Pdead状态以外的其余状态，在runtime进行GC的时候，P都会被指定成Pgcstop。在GC结束后状态不会回复到GC前的状态，而是都统一直接转到了Pidle 【这意味着，他们都需要被重新调度】。**
 
-【注意】除了Pgcstop 状态的P，其他状态的P都会在调用runtime.GOMAXPROCS 函数减少P数目时，被认为是多余的P而状态转为Pdead，这时候其带的可运行G的队列中的G都会被转移到调度器的可运行G队列中，它的自由G队列 【gfree】也是一样被移到调度器的自由列表【runtime.sched.gfree】中。
+【注意】除了Pgcstop 状态的P，其他状态的P都会在调用runtime**.GOMAXPROCS 函数减少P数目时**，被认为是多余的P而状态转为Pdead，这时候其带的可运行G的队列中的G都会被转移到调度器的可运行G队列中，它的自由G队列 【gfree】也是一样被移到调度器的自由列表【runtime.sched.gfree】中。
 
 【注意】每个P中都有一个可运行G队列及自由G队列。自由G队列包含了很多已经完成的G，随着被运行完成的G的积攒到一定程度后，runtime会把其中的部分G转移到全局调度器的自由G队列 【runtime.sched.gfree】中。
 
@@ -451,6 +451,20 @@ type p struct {
 
 
 // 一轮调度找到可运行的goroutine并执行
+不考虑gc的逻辑
+检查定时器 对需要删除和调整的定时器 进行调整 如果计时器时间到了 会调用回调函数 timer.f() 通过chanel触发
+每调度61次从全局的任务队列找g来执行保证公平
+全局没找到，从本地队列找，本地如果没有 findrunnable()阻塞查找 实在找不到会把当前p放到idle然后m进入休眠
+	findrunnable()
+		检查定时器
+		本地队列找
+		全局找
+		netpoll wait
+		偷取其他P的本地队列
+		偷取其他P的定时器
+		把p放入idle
+		m通过信号量睡眠等待唤醒 修改P状态 重新开始找任务
+
 func schedule() {
    
    _g_ := getg()
@@ -458,7 +472,7 @@ func schedule() {
    if _g_.m.locks != 0 {
       throw("schedule: holding locks")
    }
-	//有
+
    if _g_.m.lockedg != 0 {
       stoplockedm()
       execute(_g_.m.lockedg.ptr(), false) // Never returns.
@@ -1312,6 +1326,8 @@ func globrunqget(_p_ *p, max int32) *g {
         // schedule中max=1
 		n = max
 	}
+    //假设是schedule中触发 max=1 那n=1
+    //还有就是findrunnable中触发
 	if n > int32(len(_p_.runq))/2 {
         //最多只能取本地队列容量的一半
 		n = int32(len(_p_.runq)) / 2
