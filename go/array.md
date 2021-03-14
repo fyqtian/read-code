@@ -66,5 +66,10 @@ func main() {
 	0x0069 00105 (a4.go:6)	ADDQ	$712968, SP
 	0x0070 00112 (a4.go:6)	RET
 
+
+如果两个数组比较会调用
+// in asm_*.s
+//go:noescape
+func memequal(a, b unsafe.Pointer, size uintptr) bool
 ```
 
