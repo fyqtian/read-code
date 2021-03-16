@@ -2,6 +2,16 @@
 
 https://draveness.me/golang/docs/part2-foundation/ch04-basic/golang-reflect/
 
+
+
+https://louyuting.blog.csdn.net/article/details/104034533
+
+
+
+<img src="..\images\20200201130357493.png" alt="20200201130357493" style="zoom:25%;" />
+
+
+
 运行时反射是程序在运行期间检查其自身结构的一种方式。反射带来的灵活性是一把双刃剑，反射作为一种元编程方式可以减少重复代码[2](https://draveness.me/golang/docs/part2-foundation/ch04-basic/golang-reflect/#fn:2)，但是过量的使用反射会使我们的程序逻辑变得难以理解并且运行缓慢。我们在这一节中会介绍 Go 语言反射的三大法则[3](https://draveness.me/golang/docs/part2-foundation/ch04-basic/golang-reflect/#fn:3)，其中包括：
 
 1. 从 `interface{}` 变量可以反射出反射对象；
@@ -268,6 +278,31 @@ func ValueOf(i interface{}) Value {
    escapes(i)
    return unpackEface(i)
 }
+
+// unpackEface converts the empty interface i to a Value.
+func unpackEface(i interface{}) Value {
+	e := (*emptyInterface)(unsafe.Pointer(&i))
+	// NOTE: don't read e.word until we know whether it is really a pointer or not.
+	t := e.typ
+	if t == nil {
+		return Value{}
+	}
+	f := flag(t.Kind())
+	if ifaceIndir(t) {
+		f |= flagIndir
+	}
+	return Value{t, e.word, f}
+}
+
+生成新对象
+func main() {
+	//r := reflect.ValueOf(123)
+	t := reflect.TypeOf(111)
+	r := reflect.New(t)
+	newInt := r.Interface().(*int)
+	fmt.Println(*newInt)
+}
+
 ```
 
 

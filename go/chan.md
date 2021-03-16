@@ -1,3 +1,7 @@
+https://mp.weixin.qq.com/s/01Hl_eOAP_k_YDTNFErTJQ debug
+
+https://draveness.me/golang/docs/part3-runtime/ch06-concurrency/golang-channel/
+
 ```go
 //example
 func main() {
@@ -77,6 +81,18 @@ func chansend1(c *hchan, elem unsafe.Pointer) {
 // 通用单通道发送/接收，如果block不是nil，
 // 睡眠可以唤醒当g.param==nil 当一个channel陷入睡眠的通道已经关闭，它容易循环并且重新操作，我们将看到它现在关闭
 // select下有有default block false
+
+如果chan未初始化非select default的情况下阻塞
+如果非阻塞并且未关闭队列满了 返回 
+如果关闭了panic
+
+判断接收队列是否为空，如果不为空说明队列内容为空的直接复制内容到消费者栈上，并唤返回
+如果缓冲队列还有空间写入缓冲队列 返回
+
+如果非阻塞的返回
+
+把当前g挂起放入发送队列中 等待唤醒
+
 func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	// 未初始化的chan
     if c == nil {
@@ -89,6 +105,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		throw("unreachable")
 	}
     // 如果是非阻塞的并且未关闭队列已经满
+    // full 如果非阻塞队列判断 有没有等待的消费者，否则判断qcount==datasiz	
 	if !block && c.closed == 0 && full(c) {
 		return false
 	}
@@ -149,7 +166,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	}
 	gp.waiting = nil
 	gp.activeStackChans = false
-    //这块 不理解
+    //gp.param 是消费者goread前设置
 	if gp.param == nil {
 		if c.closed == 0 {
 			throw("chansend: spurious wakeup")
@@ -201,6 +218,9 @@ func chanrecv2(c *hchan, elem unsafe.Pointer) (received bool) {
 // 否则如果chan已经关闭，空的*ep返回（true，false）
 // 否则填充*ep并返回(true,true)
 // 一个非空的ep必须指向堆或者调用者的栈
+
+如果chan为nil阻塞挂起，非阻塞的返回
+如果非阻塞队列为空
 func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
 	// 未初始化
     if c == nil {
@@ -213,6 +233,8 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		throw("unreachable")
 	}
 	// 如果非阻塞 chan缓冲空
+    empty 如果是阻塞的判断是否有发送者
+    非阻塞的判断qcount
 	if !block && empty(c) {
 		//如果未关闭
 		if atomic.Load(&c.closed) == 0 {
@@ -235,7 +257,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		}
 		return true, false
 	}
-	// 有等待发送的队列 说明缓冲队列满了
+	// 有等待发送的队列 说明没有接收者
 	if sg := c.sendq.dequeue(); sg != nil {
         //找到等待发送的sender，如果是无缓冲队列的直接从发送者拷贝数据
         //如果是有缓冲队列 从对头接收值并将sender的值copy到缓冲区尾部
@@ -333,7 +355,10 @@ func recv(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
 	goready(gp, skip+1)
 }
 
-
+关闭一个nil 的panic
+重复关闭 panic
+找到所有的等待接收的g 释放
+找到所有等待发送的g 释放 因为已关闭 gp.parm==nil 唤醒的g会panic
 func closechan(c *hchan) {
     //未初始化
 	if c == nil {
