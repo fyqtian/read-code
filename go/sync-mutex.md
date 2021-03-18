@@ -2,6 +2,24 @@
 
 https://mp.weixin.qq.com/s/7OZ8lmkiQU16884owQR-fw 信号量
 
+https://mp.weixin.qq.com/s/IIrFNWMkY2sArWQ1R7i51g
+
+
+
+- 正常模式（非公平模式）
+
+阻塞等待的`goroutine`保存在`FIFO`的队列中，唤醒的`goroutine`不直接拥有锁，需要与新来的`goroutine`竞争获取锁。因为新来的`goroutine`很多已经占有了`CPU`，所以唤醒的`goroutine`在竞争中很容易输；但如果一个`goroutine`获取锁失败超过**`1ms`**,则会将`Mutex`切换为饥饿模式。
+
+
+
+- 饥饿模式（公平模式）
+
+这种模式下，直接将等待队列队头`goroutine`解锁`goroutine`；新来的`gorountine`也**不会尝试获得锁**，**而是直接插入到等待队列队尾。**
+
+如果一个`goroutine`获得了锁，并且他在**等待队列队尾 或者 他等待小于`1ms`**，则会将`Mutex`的模式切换回正常模式。正常模式有更好的性能，新来的`goroutine`通过几次竞争可以直接获取到锁，尽管当前仍有等待的`goroutine`。而饥饿模式则是对正常模式的补充，防止等待队列中的`goroutine`永远没有机会获取锁。
+
+![starv-mode](..\images\starv-mode.webp)
+
 ```go
 //example
 func main() {
@@ -38,6 +56,15 @@ const (
 	mutexStarving //饥饿模式 
 	mutexWaiterShift = iota //等待锁得数量得goruntine
 )
+
+mutex.state & mutexLocked 加锁状态 1 表示已加锁 0 表示未加锁
+
+mutex.state & mutexWoken  唤醒状态 1 表示已唤醒状态 0 表示未唤醒
+
+mutex.state & mutexStarving  饥饿状态  1 表示饥饿状态 0表示正常状态
+
+mutex.state >> mutexWaiterShift得到当前goroutine数目
+
 
 正常模式下所有等待得goroutine按照顺序等待，唤醒得goruntine不会直接持有锁，而是和新请求得goroutine竞争
 新请求锁得goroutine具有优势，它正在cpu上执行，刚唤醒得goroutine有很大概率失败，在这种情况下，这个被唤醒得goroutine会
@@ -173,7 +200,7 @@ func (m *Mutex) lockSlow() {
 				}
                 
 				delta := int32(mutexLocked - 1<<mutexWaiterShift)
-                //如果未处在饥饿或者等待队列为1
+                //锁获取时间小于1秒或者在是队列最后一个
 				if !starving || old>>mutexWaiterShift == 1 {
 					// Exit starvation mode.
 					// Critical to do it here and consider wait time.
@@ -264,6 +291,7 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 	for {
 		lockWithRank(&root.lock, lockRankRoot)
 		// Add ourselves to nwait to disable "easy case" in semrelease.
+        递增nwait进而避免semrelease中的快速路径
 		atomic.Xadd(&root.nwait, 1)
 		// Check cansemacquire to avoid missed wakeup.
 		if cansemacquire(addr) {
@@ -286,7 +314,12 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 }
 
 
-
+unlock完毕mutex.state!=0 则存在以下可能
+直接将锁交给等待队列的第一个goroutine
+当前存在等待goroutine 然后唤醒它 但不是第一个goroutine
+当前存在自旋等待的goroutine 则不唤醒其他等待gorotune
+正常模式下
+饥饿模式下
 
 func (m *Mutex) Unlock() {
 	// Fast path: drop lock bit.
@@ -322,6 +355,167 @@ func (m *Mutex) unlockSlow(new int32) {
 	} else {
         //在饥饿模式下，调用runtime_Semrelease 方法将当前锁交给下一个正在尝试获取锁的等待者，等待者被唤醒后会得到锁，在这时互斥锁还不会退出饥饿状态
 		runtime_Semrelease(&m.sema, true, 1)
+	}
+}
+
+```
+
+
+
+
+
+
+
+### 信号量
+
+`Mutex`对`goroutine`的阻塞和唤醒操作是利用`semaphore`来实现的，大致的思路是：Go runtime维护了一个全局的变量`semtable`,它保持了所有的信号量
+
+```go
+const semTabSize = 251
+
+var semtable [semTabSize]struct {
+ root semaRoot
+ pad  [cpu.CacheLinePadSize - unsafe.Sizeof(semaRoot{})]byte
+}
+```
+
+每个信号量都由一个变量地址指定，Mutex的栗子里就是`mutex.sema`的地址
+
+```go
+type semaRoot struct {
+ lock  mutex
+ treap *sudog // root of balanced tree of unique waiters.
+ nwait uint32 // Number of waiters. Read w/o the lock.
+}
+```
+
+<img src="D:\gocode\read-code\images\sema-table.webp" alt="sema-table" style="zoom:67%;" />
+
+
+
+```go
+
+func semroot(addr *uint32) *semaRoot {
+    // 如果定位到同一个key？
+	return &semtable[(uintptr(unsafe.Pointer(addr))>>3)%semTabSize].root
+}
+
+func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes int) {
+   gp := getg()
+   if gp != gp.m.curg {
+      throw("semacquire not on the G stack")
+   }
+
+ // 低成本case
+  // 若addr大于1 并通过CAS -1 成功，则获取信号量成功 不需要阻塞
+   if cansemacquire(addr) {
+      return
+   }
+ // 复杂 case:
+ // 增加等待goroutine数量
+ // 再次尝试cansemacquire 成功则返回
+ // 失败则将自己作为一个waiter入队
+ // sleep
+ // (waiter descriptor is dequeued by signaler)
+    从当前p.sudogcache拿 当前p没有从全局拿 没有就新建
+   s := acquireSudog()
+   root := semroot(addr)
+   t0 := int64(0)
+   s.releasetime = 0
+   s.acquiretime = 0
+   s.ticket = 0
+   if profile&semaBlockProfile != 0 && blockprofilerate > 0 {
+      t0 = cputicks()
+      s.releasetime = -1
+   }
+   if profile&semaMutexProfile != 0 && mutexprofilerate > 0 {
+      if t0 == 0 {
+         t0 = cputicks()
+      }
+      s.acquiretime = t0
+   }
+   for {
+      lockWithRank(&root.lock, lockRankRoot)
+        // 给nwait+1 这样semrelease中不会进低成本路径了
+      atomic.Xadd(&root.nwait, 1)
+      // 检查 cansemacquire 避免错过唤醒
+      if cansemacquire(addr) {
+         atomic.Xadd(&root.nwait, -1)
+         unlock(&root.lock)
+         break
+      }
+         //cansemacquire之后的semrelease都可以知道我们正在等待
+    //上面设置了nwait，所以会直接进入sleep 即goparkunlock
+      root.queue(addr, s, lifo)
+      goparkunlock(&root.lock, waitReasonSemacquire, traceEvGoBlockSync, 4+skipframes)
+      if s.ticket != 0 || cansemacquire(addr) {
+         break
+      }
+   }
+   if s.releasetime > 0 {
+      blockevent(s.releasetime-t0, 3+skipframes)
+   }
+   releaseSudog(s)
+}
+
+
+
+
+func semrelease1(addr *uint32, handoff bool, skipframes int) {
+	root := semroot(addr)
+	atomic.Xadd(addr, 1)
+
+	 // Easy case: no waiters?
+ // 这个检查必须发生在xadd之后 避免错过唤醒
+ // (see loop in semacquire).
+	if atomic.Load(&root.nwait) == 0 {
+		return
+	}
+
+	 // Harder case: 搜索一个waiter 并唤醒它
+	lockWithRank(&root.lock, lockRankRoot)
+	if atomic.Load(&root.nwait) == 0 {
+		  // count值已经被另一个goroutine消费了   （这不重复解锁吗）
+ 		 // 所以不需要唤醒其他goroutine      
+		unlock(&root.lock)
+		return
+	}
+	s, t0 := root.dequeue(addr)
+	if s != nil {
+		atomic.Xadd(&root.nwait, -1)
+	}
+	unlock(&root.lock)
+	if s != nil { // May be slow or even yield, so unlock first
+		acquiretime := s.acquiretime
+		if acquiretime != 0 {
+			mutexevent(t0-acquiretime, 3+skipframes)
+		}
+		if s.ticket != 0 {
+			throw("corrupted semaphore ticket")
+		}
+		if handoff && cansemacquire(addr) {
+			s.ticket = 1
+		}
+		readyWithTime(s, 5+skipframes)
+		if s.ticket == 1 && getg().m.locks == 0 {
+			// Direct G handoff
+			// readyWithTime has added the waiter G as runnext in the
+			// current P; we now call the scheduler so that we start running
+			// the waiter G immediately.
+			// Note that waiter inherits our time slice: this is desirable
+			// to avoid having a highly contended semaphore hog the P
+			// indefinitely. goyield is like Gosched, but it emits a
+			// "preempted" trace event instead and, more importantly, puts
+			// the current G on the local runq instead of the global one.
+			// We only do this in the starving regime (handoff=true), as in
+			// the non-starving case it is possible for a different waiter
+			// to acquire the semaphore while we are yielding/scheduling,
+			// and this would be wasteful. We wait instead to enter starving
+			// regime, and then we start to do direct handoffs of ticket and
+			// P.
+			// See issue 33747 for discussion.
+			goyield()
+		}
 	}
 }
 
