@@ -1,0 +1,1 @@
+https://jimmysong.io/kubernetes-handbook/concepts/deployment.html 文档
