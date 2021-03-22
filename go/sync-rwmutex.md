@@ -1,6 +1,22 @@
 ### RWMutex
 
+https://mp.weixin.qq.com/s/jCOiTaREbxitiqaWE4SnsA
 
+
+
+![图片](https://mmbiz.qpic.cn/mmbiz_png/brwbhUj36SzT20cibGoTgY3n8Qd4ric5ibfHz7u0LiaIy82FoLjAbbVpSvPlzZY7TKlMsVe0VSXHmQ6QQhzlNy96cA/640?wx_fmt=png&tp=webp&wxfrom=5&wx_lazy=1&wx_co=1)
+
+假设一个场景，不同操作时不同属性的值变化如下表：
+
+| 操作                                                 | writerSem     | readerSem     | readerCount               | readerWait | rw.w |
+| :--------------------------------------------------- | :------------ | :------------ | :------------------------ | :--------- | :--- |
+| 4次Rlock()且均未释放                                 | 未阻塞写操作  | 未阻塞读操作  | 4                         | 0          | 0    |
+| 假设执行一次Unlock()                                 | 未阻塞写操作  | 未阻塞读操作  | 4-1=3                     | 0          | 0    |
+| 尝试执行Lock()                                       | 阻塞1个写操作 | 未阻塞读操作  | 3-(1<<30)                 | 3          | 0    |
+| Lock()等待readerWait个读操作执行完毕                 |               |               |                           |            |      |
+| 执行2次RUnlock()同时执行2次Rlock()                   | 阻塞1个写操作 | 阻塞2个读操作 | 3-(1<<30)-2+2             | 3-2        | 0    |
+| 第一次Lock()未获得锁 再次执行Lock() 将被阻塞在rw.w上 | 阻塞1个写操作 | 阻塞2个读操作 | 3-(1<<30)-2+2             | 3-2        | 1    |
+| 第4次RUnlock执行完毕时 会唤醒阻塞的第一个Lock        | 未阻塞写      | 阻塞2个读操作 | 3-(1<<30)-2+2-1+(1<<30)=2 | 0          | 1    |
 
 ```go
 // There is a modified copy of this file in runtime/rwmutex.go.
@@ -26,10 +42,10 @@
 
 type RWMutex struct {
    w           Mutex  // held if there are pending writers
-   writerSem   uint32 // semaphore for writers to wait for completing readers
-   readerSem   uint32 // semaphore for readers to wait for completing writers
-   readerCount int32  // number of pending readers
-   readerWait  int32  // number of departing readers
+   writerSem   uint32 // 等待读操作完成的写等待的信号量
+   readerSem   uint32 // 等待写操作完成的读等待的信号量
+   readerCount int32  // 阻塞的读操作数量
+   readerWait  int32  // 写操作 来之前 读操作数量
 }
 
 // RLock locks rw for reading.
@@ -52,6 +68,7 @@ func (rw *RWMutex) RLock() {
 // It is a run-time error if rw is not locked for reading
 // on entry to RUnlock.
 func (rw *RWMutex) RUnlock() {
+    // 移除一个rlock
     // r < 0 有写锁在等待
 	if r := atomic.AddInt32(&rw.readerCount, -1); r < 0 {
 		// Outlined slow-path to allow the fast-path to be inlined
@@ -76,6 +93,15 @@ func (rw *RWMutex) rUnlockSlow(r int32) {
 // Lock locks rw for writing.
 // If the lock is already locked for reading or writing,
 // Lock blocks until the lock is available.
+
+大致步骤：
+
+Lock首先调用了rw.w.Lock()来解决多个写操作并发请求的竞争问题：
+如果存在多个写操作，只有一个写操作会获取到rw.w锁接着尝试剩余的操作，其他的写操作会被阻塞在rw.w上。
+
+调用atomic.AddInt32(&rw.readerCount, -rwmutexMaxReaders)，
+这里结合RLock()中的atomic.AddInt32(&rw.readerCount, 1) < 0则将读操作阻塞在rw.readerSem上，以此来让读操作感知到当前是否存在阻塞的写操作。
+
 func (rw *RWMutex) Lock() {
     //上互斥锁
 	rw.w.Lock()
