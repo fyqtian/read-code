@@ -128,7 +128,7 @@ func growslice(et *_type, old slice, cap int) slice {
 	// 如果类型的长度是空
 	if et.size == 0 {
         // append不应创建一个nil指针长度不为0的slice
-        // 我们鸡舍append不需要保存旧的数据
+        // 我们假设append不需要保存旧的数据
 		return slice{unsafe.Pointer(&zerobase), old.len, cap}
 	}
 	//旧slice的CAP

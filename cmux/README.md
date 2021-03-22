@@ -183,7 +183,7 @@ func (m *cMux) serve(c net.Conn, donec <-chan struct{}, wg *sync.WaitGroup) {
 
 
 
-```
+```go
 //http
 
 httpL := m.Match(cmux.HTTP1Fast())

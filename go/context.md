@@ -78,6 +78,15 @@ type Context interface {
    // Value — 从 context.Context 中获取键对应的值，对于同一个上下文来说，多次调用 Value 并传入相同的 Key 会返回相同的结果，该方法可以用来传递请求特定的数据；
    Value(key interface{}) interface{}
 }
+
+
+// closedchan is a reusable closed channel.
+var closedchan = make(chan struct{})
+
+func init() {
+    //永远是一个关闭的通道
+	close(closedchan)
+}
 ```
 
 
