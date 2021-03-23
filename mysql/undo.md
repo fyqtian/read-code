@@ -2,6 +2,101 @@
 
 http://mysql.taobao.org/monthly/2015/04/01/
 
+https://segmentfault.com/a/1190000017888478
+
+http://mysql.taobao.org/monthly/2015/05/01/
+
+### undo log的定义
+
+undo log主要记录的是数据的逻辑变化，为了在发生错误时回滚之前的操作，需要将之前的操作都记录下来，然后在发生错误时才可以回滚。
+
+### undo log的作用
+
+undo是一种**逻辑日志**，有两个作用：
+
+- 用于事务的回滚
+- MVCC
+
+### undo log的写入时机
+
+- DML操作修改聚簇索引前，记录undo日志
+- 二级索引记录的修改，**不记录undo日志**
+
+需要注意的是，**undo页面的修改，同样需要记录redo日志。**
+
+### undo的存储位置
+
+在InnoDB存储引擎中，undo存储在回滚段(Rollback Segment)中,每个回滚段记录了1024个undo log segment，而在每个undo log segment段中进行undo 页的申请，在5.6以前，**Rollback Segment是在共享表空间里的，5.6.3之后，可通过 innodb_undo_tablespace设置undo存储的位置。**
+
+### undo的类型
+
+在InnoDB存储引擎中，undo log分为：
+
+- insert undo log
+- update undo log
+
+insert undo log是指在insert 操作中产生的undo log，**因为insert操作的记录，只对事务本身可见，对其他事务不可见**。故该undo log可以在事务提交后直接删除，不需要进行purge操作。
+
+而update undo log记录的是对**delete 和update操作产生的undo log**，**该undo log可能需要提供MVCC机制**，因此不能再事务提交时就进行删除。提交时放入undo log链表，等待purge线程进行最后的删除。
+
+补充：purge线程两个主要作用是：**清理undo页和清除page里面带有Delete_Bit标识的数据行**。在InnoDB中，事务中的Delete操作实际上并不是真正的删除掉数据行，而是一种Delete Mark操作，在记录上标识Delete_Bit，而不删除记录。是一种"假删除",只是做了个标记，真正的删除工作需要后台purge线程去完成。
+
+
+
+## undo log 是否是redo log的逆过程？
+
+undo log 是否是redo log的逆过程？其实从前文就可以得出答案了，**undo log是逻辑日志**，对事务回滚时，只是将数据库逻辑地恢复到原来的样子，而redo log是物理日志，记录的是数据页的物理变化，**显然undo log不是redo log的逆过程。**
+
+## redo & undo总结
+
+下面是redo log + undo log的简化过程，便于理解两种日志的过程：
+
+```
+假设有A、B两个数据，值分别为1,2.
+1. 事务开始
+2. 记录A=1到undo log
+3. 修改A=3
+4. 记录A=3到 redo log
+5. 记录B=2到 undo log
+6. 修改B=4
+7. 记录B=4到redo log
+8. 将redo log写入磁盘
+9. 事务提交
+```
+
+实际上，在insert/update/delete操作中，redo和undo分别记录的内容都不一样，量也不一样。在InnoDB内存中，一般的顺序如下：
+
+- **写undo的redo**
+- **写undo**
+- 修改数据页
+- 写Redo
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 Undo log是InnoDB MVCC事务特性的重要组成部分。**当我们对记录做了变更操作时就会产生undo记录**，Undo记录默认被记录到系统表空间(ibdata)中，但从5.6开始，也可以使用独立的Undo 表空间。
@@ -80,9 +175,9 @@ undo log是采用段(segment)的方式来记录的，每个undo操作在记录�
 
 除了将多个操作组合在一个事务中，记录binlog的操作也可以按组的思想进行优化：将多个事务涉及到的binlog一次性flush，而不是每次flush一个binlog。
 
-事务在提交的时候不仅会记录事务日志，还会记录二进制日志，但是它们谁先记录呢？二进制日志是MySQL的上层日志，先于存储引擎的事务日志被写入。
+事务在提交的时候不仅会记录事务日志，还会记录二进制日志，但是它们谁先记录呢？**二进制日志是MySQL的上层日志，先于存储引擎的事务日志被写入。**
 
-在MySQL5.6以前，当事务提交(即发出commit指令)后，MySQL接收到该信号进入commit prepare阶段；进入prepare阶段后，立即写内存中的二进制日志，写完内存中的二进制日志后就相当于确定了commit操作；然后开始写内存中的事务日志；最后将二进制日志和事务日志刷盘，它们如何刷盘，分别由变量 sync_binlog 和 innodb_flush_log_at_trx_commit 控制。
+在MySQL5.6以前，当事务提交(即发出commit指令)后，**MySQL接收到该信号进入commit prepare阶段；进入prepare阶段后，立即写内存中的二进制日志，写完内存中的二进制日志后就相当于确定了commit操作；然后开始写内存中的事务日志；最后将二进制日志和事务日志刷盘，它们如何刷盘，分别由变量 sync_binlog 和 innodb_flush_log_at_trx_commit 控制。**
 
 但因为要保证二进制日志和事务日志的一致性，在提交后的prepare阶段会启用一个**prepare_commit_mutex**锁来保证它们的顺序性和一致性。但这样会导致开启二进制日志后group commmit失效，特别是在主从复制结构中，几乎都会开启二进制日志。
 
