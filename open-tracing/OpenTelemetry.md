@@ -2,6 +2,10 @@ OpenTelemetry
 
 https://www.mmbyte.com/article/124104.html
 
+https://github.com/open-telemetry
+
+https://opentelemetry.io/docs/
+
 如果刚接触Opentelemetry，那么需要了解如下术语：
 
 - Traces：记录经过分布式系统的请求活动，一个trace是spans的有**向无环图**
