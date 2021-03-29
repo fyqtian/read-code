@@ -1,0 +1,1 @@
+https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake
