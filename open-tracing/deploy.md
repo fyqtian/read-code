@@ -4,6 +4,10 @@ https://www.jianshu.com/p/ffc597bb4ce8
 
 https://github.com/jaegertracing/jaeger/blob/master/docker-compose/jaeger-docker-compose.yml
 
+
+
+https://www.elastic.co/guide/cn/kibana/current/docker.html
+
 ```yaml
 version: '2.1'
 services:
@@ -51,6 +55,7 @@ services:
     image: docker.elastic.co/kibana/kibana:5.6.4
     environment:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=elastic
     ports:
       - 5601:5601
     depends_on:
