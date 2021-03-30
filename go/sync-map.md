@@ -1,5 +1,28 @@
 ### sync.Map
 
+https://zhuanlan.zhihu.com/p/44585993
+
+<img src="..\images\image-20210330112911073.png" style="zoom:70%;" />
+
+从上图中可以看出，read map 和 dirty map 中含有相同的一部分 `entry`，我们称作是 **normal entries，是双方共享的**，并且满足：其中的 `entry.p` 只会是两种状态:
+
+```
+nil      	其中 nil 表示 deleted
+expunged 
+```
+
+但是 read map 中含有一部分 `entry` **是不属于 dirty map** 的，而这部分 `entry` 就是状态为 `expunged` 状态的 `entry`。
+
+而 dirty map 中有一部分 `entry` 也是**不属于 read map** 的，而这部分其实是来自 `Store` 操作形成的（也就是新增的 `entry`），换句话说就是新增的 `entry` 是出现在 dirty map 中的。
+
+
+
+**read map** 是用来进行 lock free 操作的（其实可以读写，但是不能做删除操作，因为一旦做了删除操作，就不是线程安全的了，也就无法 lock free），
+
+**dirty map** 是用来在无法进行 lock free 操作的情况下，需要 lock 来做一些更新工作的对象。
+
+
+
 ```go
 func main() {
    m := sync.Map{}
@@ -71,7 +94,11 @@ func newEntry(i interface{}) *entry {
 }
 
 
-// Store sets the value for a key.
+如果从 read map 中能够找到 normal entry 的话，那么就直接 update 这个 entry 就行（lock free)
+否则，就上锁，对 dirty map 进行相关操作
+
+上锁之后，需要重新 check 一下 read map 中的内容（这一点是 lockless 里面的一种常见的 pattern），如果发现仍然是 expunged 的，那么会将 expunged 标记为 nil，并且在 dirty map 里面添加相应 key（这里其实就是将这个 entry 从一个 expunged 的 entry 变成了 normal entry）。
+
 func (m *Map) Store(key, value interface{}) {
 	read, _ := m.read.Load().(readOnly)
     //从read中读,如果存在，判断entry是否已经被expunged,如果expunged返回false
@@ -120,6 +147,19 @@ func (m *Map) dirtyLocked() {
 		}
 	}
 }
+
+func (e *entry) tryExpungeLocked() (isExpunged bool) {
+	p := atomic.LoadPointer(&e.p)
+	for p == nil {
+        // 把删除状态变为expunged
+		if atomic.CompareAndSwapPointer(&e.p, nil, expunged) {
+			return true
+		}
+		p = atomic.LoadPointer(&e.p)
+	}
+	return p == expunged
+}
+
 
 
 func (m *Map) Load(key interface{}) (value interface{}, ok bool) {
