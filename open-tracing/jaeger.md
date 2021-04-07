@@ -39,6 +39,81 @@ https://my.oschina.net/u/2548090/blog/1821372
 
 
 
+
+
+```json
+{
+        "_index" : "jaeger-span-2021-04-01",
+        "_type" : "_doc",
+        "_id" : "Fmv_ingB5T5JhUaVPJVN",
+        "_score" : 1.0,
+        "_source" : {
+          "traceID" : "5691daccfaadf424",
+          "spanID" : "0c73af8d30275d93",
+          "flags" : 1,
+          "operationName" : "span_foo3",
+          "references" : [
+            {
+              "refType" : "CHILD_OF",
+              "traceID" : "5691daccfaadf424",
+              "spanID" : "5691daccfaadf424"
+            }
+          ],
+          "startTime" : 1617239683660295,
+          "startTimeMillis" : 1617239683660,
+          "duration" : 503458,
+          "tags" : [
+            {
+              "key" : "request",
+              "type" : "string",
+              "value" : "Hello foo3"
+            },
+            {
+              "key" : "reply",
+              "type" : "string",
+              "value" : "foo3Reply"
+            },
+            {
+              "key" : "internal.span.format",
+              "type" : "string",
+              "value" : "jaeger"
+            }
+          ],
+          "logs" : [ ],
+          "process" : {
+            "serviceName" : "jaeger-demo",
+            "tags" : [
+              {
+                "key" : "jaeger.version",
+                "type" : "string",
+                "value" : "Go-2.25.0"
+              },
+              {
+                "key" : "hostname",
+                "type" : "string",
+                "value" : "yuxiadeMBP.lan"
+              },
+              {
+                "key" : "ip",
+                "type" : "string",
+                "value" : "192.168.2.135"
+              },
+              {
+                "key" : "client-uuid",
+                "type" : "string",
+                "value" : "377aab8f919e8d4a"
+              }
+            ]
+          }
+        }
+      }
+```
+
+
+
 ### jaeger+Cassandra
 
 https://blog.csdn.net/niyuelin1990/article/details/80225305
+
+
+
