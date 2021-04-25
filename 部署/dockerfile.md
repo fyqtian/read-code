@@ -1,5 +1,7 @@
 ### dockerfile
 
+https://www.codeleading.com/article/66893503567/ aphine镜像不可用 引用了cgo
+
 ```dockerfile
 FROM  AS builder
 WORKDIR /build
