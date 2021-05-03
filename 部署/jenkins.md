@@ -113,3 +113,23 @@ pipeline {
 }
 
 ```
+
+
+
+
+
+### docker agent
+
+https://www.jenkins.io/doc/book/using/using-agents/
+
+先配置ssh
+
+```
+docker run -d --rm --name=agent1 -p {需要修改}:22  -e "JENKINS_AGENT_SSH_PUBKEY=[your-public-key]" jenkins/ssh-agent:alpine
+```
+
+docker run -d --rm --name=agent1 -p 30022:22  -e "JENKINS_AGENT_SSH_PUBKEY=ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC3RzyLINjkWms5700mlQJzs2KcRVLfz5dByu6SGyZ75uCavhHVx98yszn9FTeDrY9vXIEp0uPm/yjCpPZl6cZN9WXrrPihUpzrXfdO5ICPX+paQsDdObjSAl8+1ffqmoKGEs4vwei4exoT3uT0qmOI0FmAlfmv5NIMq6pb/3HTHluLdCi8Pnop5tO6CqZvxc7SgveuaVGLf+SwIslCoMHgn0WSCWHwSL0FoyYzgdWRyLl4gRfJRd1AzKpm74M8FMBF1liItSOFQWcmsUFZy0ino/lnNX8ZI+vi0086heQ7EhRfBeHewqnXN+heihlcevqVOK8pw4oSSA3feX2quXnjg/ACNSuPqHgxkz4AW9km3VK/Ecm6lFhpP5DjuIpuFxf2qZ5Wd2AF/ZELC/ZXzfuoknZFHu9HPzMIj3M6JGqGBI3rec7rkVMXpVzolXpz7oB11N728wnaaNoPBu8dwKqI+qSwAxzLLY0uW5F+WEVYQ3/zCHd16xQ4n0ZSvHHWnsk= root@dcece3f56ebd" jenkins/ssh-agent:alpine
+
+
+
+看官方的教程 会找不到java执行路径 需要在配置中手工改（不清楚啥问题）
