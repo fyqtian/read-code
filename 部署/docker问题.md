@@ -1,5 +1,29 @@
 ### docker问题
 
+centos 安装docker
+
+```
+ sudo yum install -y yum-utils
+ sudo yum-config-manager \
+    --add-repo \
+    https://download.docker.com/linux/centos/docker-ce.repo
+    
+  yum install docker-ce docker-ce-cli containerd.io
+  
+  
+   yum list docker-ce --showduplicates | sort -r
+   
+   
+   sudo yum install docker-ce-<VERSION_STRING> docker-ce-cli-<VERSION_STRING> containerd.io
+   
+   
+   systemctl start docker
+   
+   
+    curl -fsSL https://get.docker.com -o get-docker.sh
+ sudo sh get-docker.sh
+```
+
 
 
 172网段冲突
@@ -50,7 +74,61 @@ cap_drop:
 
 
 
-作者：左蓝
-链接：https://www.jianshu.com/p/748416621013
-来源：简书
-著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
+-v 挂在文件 修改后不生效
+
+```
+在启动docker容器时，为了保证一些基础配置与宿主机保持同步，通常需要将这些配置文件挂载进 docker容器，例如/etc/resolv.conf//etc/hosts//etc/localtime等。
+
+当这些配置变化时，我们通常会修改这些文件。但是此时遇到了一个问题：
+
+当在宿主机上修改这些文件后，docker容器内查看时，这些文件并未发生对应的修改。
+
+然后通过查阅相关资料，发现该问题是由docker -v挂载文件和某些编辑器存储文件的行为共同导致 的。
+
+docker 挂载文件时，并不是挂载了某个文件的路径，而是实打实的挂载了对应的文件，即挂载了某 个指定的inode文件。
+某些编辑器(vi)在编辑保存文件时，采用了备份、替换的策略，即编辑过程中，将变更写入新文件， 保存时，再将备份文件替换原文件，此时会导致文件的inode发生变化。
+原inode对应的文件其实并没有发生修改。
+因此，我们从宿主机上修改这些文件时，应该采用echo重定向等操作，避免文件的inode发生变化。
+
+```
+
+
+
+
+
+docker-compose 容器连接
+
+
+
+docker-compose config 解析docker-compose.yml
+
+
+
+#### image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-20.11}
+
+Both `$VARIABLE` and `${VARIABLE}` syntax are supported. Additionally when using the [2.1 file format](https://docs.docker.com/compose/compose-file/compose-versioning/#version-21), it is possible to provide inline default values using typical shell syntax:
+
+- `${VARIABLE:-default}` evaluates to `default` if `VARIABLE` is unset or empty in the environment.
+- `${VARIABLE-default}` evaluates to `default` only if `VARIABLE` is unset in the environment.
+
+
+
+
+
+### 默认存储位置
+
+{
+   "data-root": "/data/docker"
+}
+
+
+
+docker-compose
+
+sudo curl -L "https://github.com/docker/compose/releases/download/1.24.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+
+
+
+```
+sudo chmod +x /usr/local/bin/docker-compose
+```

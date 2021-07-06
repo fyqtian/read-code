@@ -2,7 +2,9 @@
 
 https://zhuanlan.zhihu.com/p/88260838
 
+http://c.biancheng.net/view/6457.html
 
+https://www.cnblogs.com/joycamp/p/13498104.html
 
 1、 **什么是DNS协议？**
 

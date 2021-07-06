@@ -2,6 +2,18 @@
 
 https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html
 
+Copy_to的字段需要显示申明store
+
+```
+ https://www.elastic.co/guide/en/elasticsearch/reference/current/copy-to.html
+ "region": {
+            "type": "text",
+            "store": true
+  }
+  查询的时候
+  GET twitter/_doc/1?stored_fields=region
+```
+
 
 
 ```
@@ -67,5 +79,38 @@ GET x-devops-ecs/_search
   }
 }
 
+```
+
+
+
+更新某个字段
+
+```
+POST x-devops-ecs/_update
+{
+  "doc": {
+   "lastSyncTime" : "2021-05-05 11:08:33"
+  }
+}
+
+```
+
+增加字段
+
+```
+
+PUT  /x-devops-security-group/_mapping
+{
+   "properties": {
+        "status":{
+          "type":"keyword"
+        },
+        "lastSyncTime": {
+            "type": "date",
+            "format": "yyyy-MM-dd HH:mm:ss"
+        }
+    }
+
+}
 ```
 

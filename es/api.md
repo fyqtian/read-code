@@ -42,3 +42,31 @@ POST _reindex
   }
 }
 ```
+
+
+
+
+
+```
+
+GET /_search
+{
+  "query": {
+    "bool": {
+      "should": [
+        { "constant_score": {
+          "query": { "match": { "description": "wifi" }}
+        }},
+        { "constant_score": {
+          "query": { "match": { "description": "garden" }}
+        }},
+        { "constant_score": {
+          "boost":   2        1
+          "query": { "match": { "description": "pool" }}
+        }}
+      ]
+    }
+  }
+
+```
+

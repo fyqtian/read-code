@@ -1,14 +1,26 @@
 ### ansible
 
+配置文件
+
+[ansible/ansible.cfg at devel · ansible/ansible (github.com)](https://github.com/ansible/ansible/blob/devel/examples/ansible.cfg)
+
+
+
 https://www.zsythink.net/archives/2481
 
-
+http://www.ansible.com.cn/docs/intro_getting_started.html#id3
 
 ansible --version
 
 /etc/ansible/host
 
 
+
+https://blog.csdn.net/Kangshuo2471781030/article/details/82665219 系列命令
+
+
+
+https://github.com/ansible/ansible-examples。
 
 **ansible2.0版本以后的写法**
 
@@ -26,13 +38,65 @@ ansible group -m ping
 
 
 
-[a]
+ansible -i ./host all -m ping
 
-127.0.0.1
 
-[pro:children]
 
-a
+ansible -i host test -a "whoami" 
+
+ansible -i host test   -u {user}    -a "whoami" 
+
+
+
+```
+ansible webservers -m service -a "name=httpd state=restarted"
+```
+
+```
+ansible atlanta -a "/sbin/reboot" -f 10
+
+ansible atlanta -a "/sbin/reboot" -f 10 -u username --become [--ask-become-pass]
+
+ansible atlanta -m copy -a "src=/etc/hosts dest=/tmp/hosts"
+
+ansible webservers -m file -a "dest=/srv/foo/b.txt mode=600 owner=mdehaan group=mdehaan"
+
+
+创建文件夹
+ansible webservers -m file -a "dest=/path/to/c mode=755 owner=mdehaan group=mdehaan state=directory"
+删除文件
+ansible webservers -m file -a "dest=/path/to/c state=absent"
+```
+
+
+
+更新软件
+
+```
+ansible webservers -m yum -a "name=acme state=present"
+```
+
+### [Managing users and groups](https://docs.ansible.com/ansible/2.9/user_guide/intro_adhoc.html#id9)
+
+You can create, manage, and remove user accounts on your managed nodes with ad-hoc tasks:
+
+```
+$ ansible all -m user -a "name=foo password=<crypted password here>"
+
+$ ansible all -m user -a "name=foo state=absent"
+```
+
+
+
+```
+$ ansible webservers -m service -a "name=httpd state=started"
+```
+
+
+
+ansible-config dump
+
+
 
 
 
@@ -98,8 +162,54 @@ ansible 127.0.0.1 -m copy -a "src=/opt/a.txt dest=/opt"
 
 
 
-## file模块
 
-## blockinfile模块
 
-## lineinfile模块
+### **playbooks**
+
+http://www.ansible.com.cn/docs/playbooks_intro.html#about-playbooks
+
+
+
+Ansible-glaxy
+
+ansible-glaxy init
+
+ansible-playbook --step
+
+Ansible-playbook stie.yml --start-task
+
+facts
+
+[ansible gather_facts配置_地下库-CSDN博客_ansible gather_facts](https://ghostwritten.blog.csdn.net/article/details/113696617)
+
+
+
+debug
+
+[Ansible Debug 调试 | 温欣爸比的博客 (wxnacy.com)](http://wxnacy.com/2020/06/04/ansible-debug/)
+
+
+
+
+
+清华大学源
+
+https://mirrors.tuna.tsinghua.edu.cn/
+
+https://mirrors.ustc.edu.cn/
+
+
+
+
+
+ansible awx 18版本以前的
+
+https://www.linuxtechi.com/install-ansible-awx-on-ubuntu/
+
+
+
+```
+ansible  all -i "ip," -m ping -u root
+
+```
+
