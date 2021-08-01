@@ -1,5 +1,9 @@
 ### Helm	
 
+
+
+ helm --kubeconfig ~/.kube/ali.yaml install netdata ./netdata
+
 ```fallback
 
 https://helm.sh/zh/docs/intro/install/

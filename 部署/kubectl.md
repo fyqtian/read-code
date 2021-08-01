@@ -10,11 +10,13 @@ kubectl config view
 
 
 
-只能监听127.0.0.1
-
-kubectl port-forward rs/redis-master 6379:6379 
 
 
+kubectl port-forward  --address 0.0.0.0  pod/nginx-86659f4cfb-29442 49999:8080
+
+
+
+kubectl **scale** deployment nginx-deployment --replicas=4
 
 
 

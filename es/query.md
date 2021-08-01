@@ -79,6 +79,20 @@ GET x-devops-ecs/_search
   }
 }
 
+
+GET x-devops-slb/_search
+{
+  "query": {
+   "match": {
+     "name": {
+       "query": "test-eden",
+       "operator": "and"
+     }
+   }
+  }
+}
+
+
 ```
 
 
@@ -112,5 +126,42 @@ PUT  /x-devops-security-group/_mapping
     }
 
 }
+```
+
+
+
+```
+GET x-devops-slb/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"term": {
+          "provider": {
+            "value": "gcp"
+          }
+        }},{"match": {
+          "search_all": "INTERNAL"
+        }}
+      ]
+    }
+  }
+}
+
+
+删除
+
+POST /x-devops-slb/_delete_by_query
+{
+  "query": {
+    "term": {
+      "provider": {
+        "value": "gcp"
+      }
+    }
+  }
+}
+
+
 ```
 

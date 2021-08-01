@@ -70,3 +70,24 @@ GET /_search
 
 ```
 
+
+
+数量10000限制
+
+```
+PUT your_index/_settings?preserve_existing=true
+{
+   
+  "max_result_window": "100000"
+}
+
+
+
+GET /x-devops-ecs/_search
+{
+  "track_total_hits": true
+}
+
+
+```
+

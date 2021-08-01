@@ -24,3 +24,8 @@ kubectl run --image=nginx:alpine nginx-app --port=80
   kubectl delete pod nginx-app  -n default
 ```
 
+
+
+转发端口
+
+kubectl port-forward  --address 0.0.0.0  pod/nginx-86659f4cfb-29442 49999:8080

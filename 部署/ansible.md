@@ -1,5 +1,14 @@
 ### ansible
 
+我们可以修改一下配置文件来修改设置，配置文件被读取的顺序如下：
+
+```
+* ANSIBLE_CONFIG (一个环境变量)
+* ansible.cfg (位于当前目录中)
+* .ansible.cfg (位于家目录中)
+* /etc/ansible/ansible.cfg
+```
+
 配置文件
 
 [ansible/ansible.cfg at devel · ansible/ansible (github.com)](https://github.com/ansible/ansible/blob/devel/examples/ansible.cfg)
@@ -213,3 +222,16 @@ ansible  all -i "ip," -m ping -u root
 
 ```
 
+
+
+ansible 指定某个组
+
+
+
+ ansible-playbook -i hosts deploy.yaml -l "ap-chengdu"
+
+ ansible-playbook -i hosts deploy.yaml --limit "ap-chengdu"
+
+**测试**
+
+ ansible-playbook  -i hosts --list-hosts deploy.yaml --limit "ap-chengdu"

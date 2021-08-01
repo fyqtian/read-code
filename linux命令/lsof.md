@@ -15,7 +15,7 @@ https://www.netadmintools.com/html/lsof.man.html
 - **-U** : 获取UNIX套接口地址
 - **-F** : 格式化输出结果，用于其它命令。可以通过多种方式格式化，如-F pcfn（用于进程id、命令名、文件描述符、文件名，并以空终止）
 
-
+-p pid
 
 #### lsof -i  获取网络连接
 
