@@ -97,6 +97,18 @@ GET x-devops-slb/_search
 
 
 
+_id查询
+
+```
+GET x-devops-ecs/_doc/aliyunus-east-1i-99ihm6h0e
+```
+
+
+
+
+
+
+
 更新某个字段
 
 ```
@@ -161,6 +173,64 @@ POST /x-devops-slb/_delete_by_query
     }
   }
 }
+
+
+```
+
+
+
+distinct
+
+```
+{
+  "query": {
+    "term": {
+      "user_id_type": 3
+    }
+  },
+  "collapse": {
+    "field": "user_id"
+  }
+}
+
+
+
+
+{
+  "query": {
+    "term": {
+      "status": "release"
+    }
+  },
+  "aggs": {
+    "count": {
+      "cardinality": {
+        "field": "_id"
+      }
+    }
+  }
+}
+
+
+
+count 
+
+
+GET x-devops-ecs/_count
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"term": {
+          "status": {
+            "value": "release"
+          }
+        }}
+      ]
+    }
+  }
+}
+
 
 
 ```

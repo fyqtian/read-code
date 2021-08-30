@@ -6,6 +6,14 @@ kubectl get pod -A
 
 
 
+#### 所有资源
+
+kubectl api-resources
+
+
+
+
+
 kubectl proxy --address='0.0.0.0'  --accept-hosts='^*$'
 
 http://{kubectl.proxy}/api/v1/namespaces/default/pods/{pod.name}}:{pod.port}/proxy
@@ -956,11 +964,93 @@ apiVersion: batch/v1beta1
 
 
 
+### Admission Controller
+
+https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#configure-initializers-on-the-fly
+
+
+
 
 
 ### **CRD  Custom Resource Definition**
 
+https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/
+
+https://cloud.redhat.com/blog/kubernetes-deep-dive-code-generation-customresources
+
 允许用户在 Kubernetes 中添加一个跟 Pod、Node 类似的、新的 API 资源类型，**即：自定义 API 资源**。
+
+// example
+
+可以看到，在这个 CRD 中，**我指定了“`group: samplecrd.k8s.io`”“`version: v1`”这样的 API 信息**，也指定了这个 CR 的**资源类型叫作 Network**，复数（plural）是 networks。
+
+然后，我还声明了它的 **scope 是 Namespaced**，即：我们定义的这个 Network 是一个属于 Namespace 的对象，类似于 Pod。
+
+```
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: networks.samplecrd.k8s.io
+spec:
+  group: samplecrd.k8s.io
+  version: v1
+  names:
+    kind: Network
+    plural: networks
+  scope: Namespaced
+  
+
+apiVersion: samplecrd.k8s.io/v1
+kind: Network
+metadata:
+  name: example-network
+spec:
+  cidr: "192.168.0.0/16"
+  gateway: "192.168.0.1"
+  
+  
+  
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  # 名称必须与下面的spec字段匹配，格式为: <plural>.<group>
+  name: crontabs.stable.example.com
+spec:
+  # 用于REST API的组名称: /apis/<group>/<version>
+  group: stable.example.com
+  # 此CustomResourceDefinition支持的版本列表
+  versions:
+    - name: v1
+      # 每个版本都可以通过服务标志启用/禁用。
+      served: true
+      # 必须将一个且只有一个版本标记为存储版本。
+      storage: true
+  # 指定crd资源作用范围在命名空间或集群
+  scope: Namespaced
+  names:
+    # URL中使用的复数名称: /apis/<group>/<version>/<plural>
+    plural: crontabs
+    # 在CLI(shell界面输入的参数)上用作别名并用于显示的单数名称
+    singular: crontab
+    # kind字段使用驼峰命名规则. 资源清单使用如此
+    kind: CronTab
+    # 短名称允许短字符串匹配CLI上的资源，意识就是能通过kubectl 在查看资源的时候使用该资源的简名称来获取。
+    shortNames:
+    - ct
+  
+
+apiVersion: "stable.example.com/v1"
+kind: CronTab
+metadata:
+  name: my-new-cron-object
+spec:
+  cronSpec: "* * * * */5"
+  image: my-awesome-cron-image
+
+   
+kubectl create -f xx.yaml
+kubectl get crontab
+```
 
 
 
@@ -984,6 +1074,14 @@ apiVersion: batch/v1beta1
 4. 
 
 kubectl create serviceaccount username
+
+
+
+kubectl get role
+
+kubectl get cluster role
+
+kubectl get clusterrole/admin -o yaml
 
 
 
@@ -1765,7 +1863,104 @@ Kubernetes 里一个非常有用的特性：**cpuset 的设置。**
           cpu: "2"
   ```
 
-  
+
+
+
+# LimitRange and ResourceQuota
+
+LimitRange可以：
+
+- 限制namespace中每个pod或container的最小和最大资源用量。
+- 限制namespace中每个PVC的资源请求范围。
+- 限制namespace中资源请求和限制数量的比例。
+- 配置资源的默认限制。
+
+
+
+### 最终pod资源限制的处理机制
+
+- 如果pod配置了请求和限制，并且请求和限制的值位于LimitRange对应类型资源的min和max之间。pod资源限制采用pod的配置。
+- 如果pod配置了请求但没有配置限制，pod限制会采用LimitRange中的默认配置。
+- 如果pod配置了限制但没有配置请求，pod请求会使用和limit相同的配置。
+- 如果pod既没有配置请求又没有配置限制，pod限制使用LimitRange定义的默认配置，请求使用defaultRequest的配置。
+
+
+
+
+
+命名空间下创建,并且在创建的时候没有**指定内存申请值和内存限制值**,则它会被默认分配request=256M的内存请求和limit=512M的
+
+ alikube describe limits
+
+```
+apiVersion: v1
+kind: 
+LimitRange
+metadata:
+  name: mem-limit-range
+spec:
+  limits:
+  - default:
+      memory: 512Mi
+    defaultRequest:
+      memory: 256Mi
+    type: Container
+    
+   
+   
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mem-limit-range
+  namespace: example
+spec:
+  limits:
+  - default:  # default limit
+      memory: 512Mi
+      cpu: 2
+    defaultRequest:  # default request
+      memory: 256Mi
+      cpu: 0.5
+    max:  # max limit
+      memory: 800Mi
+      cpu: 3
+    min:  # min request
+      memory: 100Mi
+      cpu: 0.3
+    maxLimitRequestRatio:  # max value for limit / request
+      memory: 2
+      cpu: 2
+    type: Container # limit type, support: Container / Pod / PersistentVolumeClaim
+    
+注意：pod类型的LimitRange会检查之后创建的pod中所有container配置的资源限制总和，如果pod内所有container的资源限制总和超过了LimitRange的限制，pod创建会被拒绝。
+
+```
+
+
+
+> ResourceQuota 用来限制 namespace 中所有的 Pod 占用的总的资源 request 和 limit
+>
+> ```
+> kubectl describe quota compute-resources --namespace=myspace
+> ```
+
+```
+apiVersion: v1 
+kind: ResourceQuota 
+metadata: 
+  name: compute-resources 
+spec: 
+  hard: 
+    pods: "4" 
+    requests.cpu: "1" 
+    requests.memory: 1Gi 
+    limits.cpu: "2" 
+    limits.memory: 2Gi
+```
+
+
+
+
 
 # 优先级与抢占机制
 

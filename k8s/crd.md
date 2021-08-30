@@ -8,6 +8,8 @@ https://blog.csdn.net/github_35614077/article/details/98749285 crd
 
 https://kubernetes.feisky.xyz/ k8s文档
 
+https://book.kubebuilder.io/quick-start.html
+
 ### kubebuilder
 
 kubebuilder能帮我们节省大量工作，让开发CRD和adminsion webhook变得异常简单
