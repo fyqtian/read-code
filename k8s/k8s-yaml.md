@@ -48,6 +48,16 @@ curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -H "Authoriza
 
 
 
+kubectl get --raw /api/v1/nodes
+
+
+
+
+
+
+
+
+
 **clusterrolebinding**
 
 kubectl create clusterrolebinding system:anonymous   --clusterrole=cluster-admin   --user=system:anonymous

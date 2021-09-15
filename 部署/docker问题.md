@@ -132,3 +132,36 @@ sudo curl -L "https://github.com/docker/compose/releases/download/1.24.1/docker-
 ```
 sudo chmod +x /usr/local/bin/docker-compose
 ```
+
+
+
+
+
+
+
+### docker harbor 使用
+
+https://www.jianshu.com/p/05c719aa39c4
+
+
+
+```
+docker login ip:port.  -p -u
+cat ~/my_password.txt | docker login --username foo --password-stdin
+```
+
+生成token ~/.docker/config.json
+
+
+
+
+
+### docker 修改属性
+
+docker container update --restart=always {id}
+
+### 或者修改配置文件
+
+停止容器
+
+/var/lib/docker/containers/容器ID
