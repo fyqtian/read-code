@@ -6,6 +6,12 @@ kubectl get pod -A
 
 
 
+
+
+kubectl get --raw "/apis/metrics.k8s.io/v1beta1/nodes" | jq .
+
+kubectl get --raw "/apis/metrics.k8s.io/v1beta1/pods" | jq .
+
 #### 所有资源
 
 kubectl api-resources
@@ -654,9 +660,19 @@ spec:
 
 ### busybox
 
+1.28.3 telnet 有问题
+
 kubectl run -i --tty --image busybox:1.28.3 dns-test --restart=Never --rm /bin/sh
 
+​	kubectl run -i --tty --image docker docker-test --restart=Never --rm /bin/sh
 
+
+
+kubectl run -i --tty --image curlimages/curl curl-test --restart=Never --rm /bin/sh
+
+
+
+kubectl run -i --tty --image widdpim/mysql-client mysql-client-test --restart=Never --rm /bin/sh
 
 ### Stateful
 
@@ -1703,6 +1719,12 @@ cpu 属于**可压缩资源**，当可压缩资源不足时，Pod 只会“饥�
 
 
 
+这两者的区别其实非常简单：**在调度的时候**，kube-scheduler **只会按照 requests 的值进行计**算。而在真正设置 Cgroups 限制的时候，kubelet 则会按照 limits 的值来进行设置。
+
+
+
+
+
 spec.containers[].resources.limits.cpu
 
 spec.containers[].resources.limits.memory
@@ -2144,5 +2166,76 @@ spec:
       - name: ndots
         value: "2"
       - name: edns0
+```
+
+
+
+
+
+### HPA
+
+```
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: php-apache
+  namespace: default
+spec:
+  # HPA的伸缩对象描述，HPA会动态修改该对象的pod数量
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: php-apache
+  # HPA的最小pod数量和最大pod数量
+  minReplicas: 1
+  maxReplicas: 10
+  # 监控的指标数组，支持多种类型的指标共存
+  metrics:
+  # Object类型的指标
+  - type: Object
+    object:
+      metric:
+        # 指标名称
+        name: requests-per-second
+      # 监控指标的对象描述，指标数据来源于该对象
+      describedObject:
+        apiVersion: networking.k8s.io/v1beta1
+        kind: Ingress
+        name: main-route
+      # Value类型的目标值，Object类型的指标只支持Value和AverageValue类型的目标值
+      target:
+        type: Value
+        value: 10k
+  # Resource类型的指标
+  - type: Resource
+    resource:
+      name: cpu
+      # Utilization类型的目标值，Resource类型的指标只支持Utilization和AverageValue类型的目标值
+      target:
+        type: Utilization
+        averageUtilization: 50
+  # Pods类型的指标
+  - type: Pods
+    pods:
+      metric:
+        name: packets-per-second
+      # AverageValue类型的目标值，Pods指标类型下只支持AverageValue类型的目标值
+      target:
+        type: AverageValue
+        averageValue: 1k
+  # External类型的指标
+  - type: External
+    external:
+      metric:
+        name: queue_messages_ready
+        # 该字段与第三方的指标标签相关联，（此处官方文档有问题，正确的写法如下）
+        selector:
+          matchLabels:
+            env: "stage"
+            app: "myapp"
+      # External指标类型下只支持Value和AverageValue类型的目标值
+      target:
+        type: AverageValue
+        averageValue: 30
 ```
 

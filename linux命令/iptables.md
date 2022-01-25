@@ -399,5 +399,15 @@ iptables -t nat -A PREROUTING -p tcp –dport 80 -j REDIRECT –to-ports 8080
 
 
 
+### DNAT SNAT区别
 
+可以简单地这样理解它们：
 
+SNAT: Source Network Address Translation，是修改网络包源ip地址的。
+DNAT: Destination Network Address Translation,是修改网络包目的ip地址的。
+
+明白了这些后，要再知道使用它们的原因，也就是你什么时候要修改源ip地址，什么时候修改目的ip地址。我拿iptables举个例子。
+
+修改源ip地址的目的一般都是为了让这个包能再回到自己这里，所以在iptables中，SNAT是在出口，也即`POSTROUTING`链发挥作用。
+
+修改目的ip地址的原因一般就是为了改变包发送的目的地，让包走出去，而不是留下来，所以在iptables中，DNAT是在入口，也即`PREROUTING`链中发挥作用，以便让包进入`FORWARD`表。

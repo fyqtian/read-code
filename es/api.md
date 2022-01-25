@@ -91,3 +91,8 @@ GET /x-devops-ecs/_search
 
 ```
 
+
+
+#### license过期
+
+POST /_license/start_basic?acknowledge=true

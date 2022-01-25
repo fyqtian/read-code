@@ -2,6 +2,10 @@
 
 https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html
 
+
+
+[ElasticSearch常用查询及聚合分析 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/183816335) 
+
 Copy_to的字段需要显示申明store
 
 ```
@@ -111,8 +115,18 @@ GET x-devops-ecs/_doc/aliyunus-east-1i-99ihm6h0e
 
 更新某个字段
 
+https://www.elastic.co/guide/en/elasticsearch/reference/7.0/docs-update.html
+
 ```
 POST x-devops-ecs/_update
+{
+  "doc": {
+   "lastSyncTime" : "2021-05-05 11:08:33"
+  }
+}
+
+
+POST x-devops-dns-domain/_update/{_id}
 {
   "doc": {
    "lastSyncTime" : "2021-05-05 11:08:33"
@@ -175,6 +189,16 @@ POST /x-devops-slb/_delete_by_query
 }
 
 
+POST /x-devops-slb/_delete_by_query
+{
+  "query": {
+    "bool":{
+      "must_not" : {
+        "term" : { "status" : "release" }
+      }
+    }
+  }
+}
 ```
 
 
@@ -233,5 +257,27 @@ GET x-devops-ecs/_count
 
 
 
+```
+
+修改字段
+
+https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-put-mapping.html
+
+
+
+```
+PUT  x-devops-dns-record/_mapping
+{
+   "properties": {
+       "record": { 
+        "type":"text",
+				"fields": {
+					"raw": {
+						"type": "keyword"
+					}
+				}
+			}
+    }
+}
 ```
 

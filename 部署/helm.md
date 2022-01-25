@@ -22,6 +22,32 @@ $ ./get_helm.sh
 
 
 
+```
+kubectl
+
+curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+
+ chmod +x ./kubectl
+ sudo mv ./kubectl /usr/local/bin/kubectl
+ 
+echo 'source <(kubectl completion bash)' >>~/.bashrc
+kubectl completion bash >/etc/bash_completion.d/kubectl
+```
+
+
+
+
+
+
+
+下载
+
+helm pull chart
+
+
+
+helm pull   pixie-operator/pixie-operator-chart --untar
+
 
 
 ```
@@ -202,17 +228,6 @@ helm install deis-workflow ./deis-workflow-0.1.0.tgz
 ```
 
 
-
-
-
-
-
-### helm3移除tiler
-
-```
-创建名称为tiller的Service Account
-创建tiller对Service Account具有集群管理员权限的ClusterRoleBinding。
-```
 
 
 

@@ -16,6 +16,8 @@
 
 
 
+注意changelog表id字段
+
 
 
 Mete base
@@ -48,7 +50,7 @@ docker run -d -p 3000:3000 \
   
   
   
- docker run -d --env-file .env -p 3000:3000 --name metabase metabase/metabase
+ docker run -d --restart=always --env-file .env -p 3000:3000 --name metabase metabase/metabase
   
 .env
 MB_DB_TYPE=mysql
@@ -101,3 +103,7 @@ export MB_JETTY_PORT=3001
 DATABASECHANGELOG
 
 DATABASECHANGELOGLOCK
+
+
+
+low_case_table_names

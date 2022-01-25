@@ -165,3 +165,24 @@ docker container update --restart=always {id}
 停止容器
 
 /var/lib/docker/containers/容器ID
+
+
+
+修改容器端口
+
+```
+vim /var/lib/docker/containers/{container_id}/hostconfig.json
+```
+
+
+
+
+
+
+
+kaniao
+
+```
+docker run -v ${PWD}:/workspace/  -v ~/.docker:/kaniko/.docker gcr.io/kaniko-project/executor --context=/workspace/ --dockerfile=/workspace/Dockerfile --destination 172.26.0.108:8089/test/myalpine:1.0
+```
+

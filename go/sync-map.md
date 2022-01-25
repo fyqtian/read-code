@@ -87,6 +87,10 @@ type entry struct {
 	//	p == expunged 说明entry已经被删除，m.dirty != nil,并且entry不存在于m.dirty
 	//  否在enrty在m.read中,存在于m.dirty中如果m.dirty != nil
     //  当m.dirty下一次创建
+  
+  // nil: 表示为被删除，调用Delete()可以将read map中的元素置为nil
+  // expunged: 也是表示被删除，但是该键只在read而没有在dirty中，这种情况出现在将read复制到dirty中，即复制的过程会先将nil标记为expunged，然后不将其复制到dirty
+  //  其他: 表示存着真正的数
 	p unsafe.Pointer // *interface{}
 }
 

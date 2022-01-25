@@ -235,3 +235,44 @@ ansible 指定某个组
 **测试**
 
  ansible-playbook  -i hosts --list-hosts deploy.yaml --limit "ap-chengdu"
+
+
+
+
+
+
+
+ansible-galaxy install xxx 会默认装在用户家目录下
+
+
+
+rpm -qi 包 查看安装时间
+
+
+
+意思是说存在没有完成的yum事务，建议先运行yum-complete-transaction命令结束它们。
+
+yum-complete-transaction --cleanup-only
+
+
+
+
+
+### command
+
+```
+使用command模块在远程主机中执行命令时，不会经过远程主机的shell处理，在使用command模块时，如果需要执行的命令中含有重定向、管道符等操作时，这些符号也会失效，比如"<", ">", "|", ";" 和 "&" 这些符号，
+```
+
+
+
+### shell
+
+```
+shell模块在远程主机中执行命令时，会经过远程主机上的/bin/sh程序处理。
+```
+
+
+
+
+

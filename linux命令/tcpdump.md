@@ -59,5 +59,7 @@ tcpdump -c 10 -nn -i ens33 tcp dst port 22
 
 
 tcpdump -c 2 -q -XX -vvv -nn -i ens33 tcp dst port 22
+
+tcpdump -i eth0 ip host 101.37.7.143 -w a.cap
 ```
 
