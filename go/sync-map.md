@@ -2,6 +2,8 @@
 
 https://zhuanlan.zhihu.com/p/44585993
 
+https://segmentfault.com/a/1190000015242373
+
 <img src="..\images\image-20210330112911073.png" style="zoom:70%;" />
 
 从上图中可以看出，read map 和 dirty map 中含有相同的一部分 `entry`，我们称作是 **normal entries，是双方共享的**，并且满足：其中的 `entry.p` 只会是两种状态:
@@ -85,6 +87,10 @@ type entry struct {
 	//	p == expunged 说明entry已经被删除，m.dirty != nil,并且entry不存在于m.dirty
 	//  否在enrty在m.read中,存在于m.dirty中如果m.dirty != nil
     //  当m.dirty下一次创建
+  
+  // nil: 表示为被删除，调用Delete()可以将read map中的元素置为nil
+  // expunged: 也是表示被删除，但是该键只在read而没有在dirty中，这种情况出现在将read复制到dirty中，即复制的过程会先将nil标记为expunged，然后不将其复制到dirty
+  //  其他: 表示存着真正的数
 	p unsafe.Pointer // *interface{}
 }
 
@@ -101,7 +107,7 @@ func newEntry(i interface{}) *entry {
 
 func (m *Map) Store(key, value interface{}) {
 	read, _ := m.read.Load().(readOnly)
-    //从read中读,如果存在，判断entry是否已经被expunged,如果expunged返回false
+    //从read中读,如果存在，判断entry是否已经被expunged,如果expunged返回false，否则更新对象
 	if e, ok := read.m[key]; ok && e.tryStore(&value) {
 		return
 	}
@@ -111,6 +117,7 @@ func (m *Map) Store(key, value interface{}) {
     //read中存在 
 	if e, ok := read.m[key]; ok {
         //如果entry已经被expunge设置为nil并写入dirty
+        // expunge状态只有从reader复制到dirty会产生
 		if e.unexpungeLocked() {
 			m.dirty[key] = e
 		}
@@ -208,12 +215,14 @@ func (m *Map) Delete(key interface{}) {
 func (m *Map) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 	read, _ := m.read.Load().(readOnly)
 	e, ok := read.m[key]
+    //如果在read中不存在并且存在dirty map
 	if !ok && read.amended {
 		m.mu.Lock()
 		read, _ = m.read.Load().(readOnly)
 		e, ok = read.m[key]
 		if !ok && read.amended {
 			e, ok = m.dirty[key]
+            delete(m.dirty, key)
 			// Regardless of whether the entry was present, record a miss: this key
 			// will take the slow path until the dirty map is promoted to the read
 			// map.
@@ -222,6 +231,7 @@ func (m *Map) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 		m.mu.Unlock()
 	}
 	if ok {
+        // 状态变成nil
 		return e.delete()
 	}
 	return nil, false

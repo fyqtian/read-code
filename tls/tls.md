@@ -57,3 +57,48 @@ TLS协议规定：client发送ClientHello消息，server必须回复ServerHello�
 
 
 在hello消息之后，server会把自己的证书在一条Certificate消息里面发给客户端(如果需要做服务器端认证的话，例如https)。 并且，如果需要的话，server会发送一条ServerKeyExchange消息，（例如如果服务器的证书只用做签名，不用做密钥交换，或者服务器没有证书）。client对server的认证完成后，server可以要求client发送client的证书，如果这是协商出来的CipherSuite允许的。下一步，server会发送ServerHelloDone消息，表示握手的hello消息部分已经结束。然后server会等待一个client的响应。如果server已经发过了CertificateRequest消息，client必须发送Certificate消息。然后发送ClientKeyExchange消息，并且这条消息的内容取决于ClientHello和ServerHello消息协商的算法。如果client发送了有签名能力的证书，就显式发送一个经过数字签名的CertificateVerify消息，来证明自己拥有证书私钥。	
+
+
+
+
+
+
+
+session 和ticket
+
+https://blog.csdn.net/mrpre/article/details/77868669
+
+http://www.ruanyifeng.com/blog/2014/09/illustration-ssl.html
+
+### session id会话复用
+
+  对于已经建立的SSL会话，**使用session id为key（session id来自第一次请求的server hello中的session id字段），主密钥为value组成一对键值，保存在本地，服务器和客户端都保存一份。**
+
+  当第二次握手时，客户端若想使用会话复用，**则发起的client hello中session id会置上对应的值，**服务器收到这个client hello，解析session id，查找本地是否有该session id，如果有，判断当前的加密套件和上个会话的加密套件是否一致，一致则允许使用会话复用，于是自己的server hello 中session id也置上和client hello中一样的值。然后计算对称秘钥，解析后续的操作。
+
+  如果服务器未查到客户端的session id指定的会话（可能是会话已经老化），则会重新握手，session id要么重新计算（和client hello中session id不一样），要么置成0，这两个方式都会告诉客户端这次会话不进行会话复用
+
+
+**Session ticket的工作流程如下：**
+
+1：客户端发起client hello，拓展中带上空的session ticket TLS，表明自己支持session ticket。
+
+2：服务器在握手过程中，如果支持session ticket，**则发送New session ticket类型的握手报文，其中包含了能够恢复包括主密钥在内的会话信息，当然，最简单的就是只发送master key。为了让中间人不可见，这个session ticket部分会进行编码、加密等操作**。
+
+3：客户端收到这个session ticket，**就把当前的master key和这个ticket组成一对键值保存起来**。服务器无需保存任何会话信息，客户端也无需知道session ticket具体表示什么。
+
+4：当客户端尝试会话复用时，会在client hello的拓展中加上session ticket，然后服务器收到session ticket，回去进行解密、解码能相关操作，来恢复会话信息。如果能够恢复会话信息，那么久提取会话信息的主密钥进行后续的操作。
+
+
+
+new session ticket 包含
+
+- Lifetime Hint告知客户端session ticket老化时间，
+- length 长度
+- session ticket具体指由服务器计算，一般经过编码+加密流程，客户端无需知道具体内容。客户端收到后，将dip dport 与master key和 这个session ticket 关联起来。
+
+
+
+重放攻击
+
+直接重复发送流量包数据

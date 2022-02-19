@@ -1,4 +1,8 @@
+
+
 ### Context
+
+https://juejin.cn/post/6844904070667321357
 
 每一个 context.Context 都会从最顶层的 Goroutine 一层一层传递到最下层。context.Context 可以在上层 Goroutine 执行出现错误时，将信号及时同步给下层
 

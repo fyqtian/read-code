@@ -38,7 +38,7 @@ writePointer(slot, ptr)
 
 上述代码会在**老对象的引用被删除时**，**将白色的老对象涂成灰色**，这样删除写屏障就可以保证弱三色不变性，老对象引用的下游对象一定可以被灰色对象引用。（**如果老对象没其他引用 需要等到下一轮gc**）
 
-<img src="/opt/read-code/images/2021-01-02-16095599123266-yuasa-delete-write-barrier.png" alt="2021-01-02-16095599123266-yuasa-delete-write-barrier" style="zoom:50%;" />
+<img src="../images/2021-01-02-16095599123266-yuasa-delete-write-barrier.png" alt="2021-01-02-16095599123266-yuasa-delete-write-barrier" style="zoom:50%;" />
 
 假设我们在应用程序中使用 Yuasa 提出的删除写屏障，在一个垃圾收集器和用户程序交替运行的场景中会出现如上图所示的标记过程：
 

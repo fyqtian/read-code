@@ -1,3 +1,5 @@
+
+
 ![v2-bae882be10b54c89d50afcc8405b14d4_720w](..\images\v2-bae882be10b54c89d50afcc8405b14d4_720w.jpg)
 
 ### netpoller
@@ -963,3 +965,47 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
    }
 }
 ```
+
+
+
+
+
+```go
+func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
+	gpp := &pd.rg
+	if mode == 'w' {
+		gpp = &pd.wg
+	}
+
+	// set the gpp semaphore to pdWait
+	for {
+		// Consume notification if already ready.
+		if atomic.Casuintptr(gpp, pdReady, 0) {
+			return true
+		}
+		if atomic.Casuintptr(gpp, 0, pdWait) {
+			break
+		}
+
+		// Double check that this isn't corrupt; otherwise we'd loop
+		// forever.
+		if v := atomic.Loaduintptr(gpp); v != pdReady && v != 0 {
+			throw("runtime: double wait")
+		}
+	}
+
+	// need to recheck error states after setting gpp to pdWait
+	// this is necessary because runtime_pollUnblock/runtime_pollSetDeadline/deadlineimpl
+	// do the opposite: store to closing/rd/wd, membarrier, load of rg/wg
+	if waitio || netpollcheckerr(pd, mode) == 0 {
+		gopark(netpollblockcommit, unsafe.Pointer(gpp), waitReasonIOWait, traceEvGoBlockNet, 5)
+	}
+	// be careful to not lose concurrent pdReady notification
+	old := atomic.Xchguintptr(gpp, 0)
+	if old > pdWait {
+		throw("runtime: corrupted polldesc")
+	}
+	return old == pdReady
+}
+```
+

@@ -1,5 +1,13 @@
 ### dockerfile
 
+https://www.codeleading.com/article/66893503567/ aphine镜像不可用 引用了cgo
+
+
+
+安装docker-compoe
+
+curl -L  https://github.com/docker/compose/releases/download/1.29.2/docker-compose-Linux-x86_64  -o docker-compose
+
 ```dockerfile
 FROM  AS builder
 WORKDIR /build
@@ -43,3 +51,7 @@ COPY --from=builder /project/main /app/go/src
 COPY /config/default_template /app/go/src/config/default_template
 CMD ["/app/go/src/main", "--profile", "test_k8s", "--configServerUrl", "", "--configBranch", "master"]
 ```
+
+
+
+https://lessisbetter.site/2020/11/10/dockerfile-arg arg用法

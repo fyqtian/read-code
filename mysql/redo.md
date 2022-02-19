@@ -4,6 +4,8 @@ https://www.cnblogs.com/f-ck-need-u/archive/2018/05/08/9010872.html
 
 
 
+
+
 <img src="..\images\2e5bff4910ec189fe1ee6e2ecc7b4bbe.png" alt="2e5bff4910ec189fe1ee6e2ecc7b4bbe" style="zoom: 33%;" />
 
 将redo log的写入拆成了两个步骤：prepare和commit，**这就是"两阶段提交"。**
