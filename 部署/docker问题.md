@@ -196,3 +196,6 @@ https://betterprogramming.pub/about-var-run-docker-sock-3bfd276e12fd
 curl --unix-socket /var/run/docker.sock http://localhost/images/json 
 ```
 
+
+
+#### 国内j加速镜像

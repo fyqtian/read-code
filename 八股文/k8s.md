@@ -451,3 +451,46 @@ CSI包括CSI Controller和CSI Node：
 
 对其他自定义指标（Custom Metrics）的监控则由Prometheus等组件来完成。
 
+
+
+
+
+#### Pod创建流程
+
+https://blog.csdn.net/weixin_42953006/article/details/106299864
+
+https://www.kubernetes.org.cn/6766.html
+
+- 用户使用create yaml创建pod，请求给apiseerver，apiserver.将yaml中的属性信息(metadata)写入etcd
+- apiserver触发watch机制准备创建pod，信息转发给调度器，调度器使用调度算法选择node，调度器将node信息给apiserver，apiserver_将绑定的node信息写入etcd_
+- _apiserver又通过watch机制，调用kubelet，指定pod信息，触发docker run命 令创建容器
+  创建完成之后反馈给kubelet, kubelet又将pod的状态信息给apiserver,
+- _apiserver又将pod的状态信息写入etcd。
+  其中kubectl get pods命令调用的时etcd_的信息
+
+
+
+
+
+
+
+### ingress 发布
+
+https://www.cnblogs.com/xiaoqi/p/ingress-nginx-canary.html
+
+Ingress-Nginx 是一个K8S ingress工具，支持配置 Ingress Annotations 来实现不同场景下的灰度发布和测试。 [Nginx Annotations](https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#canary) 支持以下 4 种 Canary 规则：
+
+- `nginx.ingress.kubernetes.io/canary-by-header`：基于 Request Header 的流量切分，适用于灰度发布以及 A/B 测试。当 Request Header 设置为 `always`时，请求将会被一直发送到 Canary 版本；当 Request Header 设置为 `never`时，请求不会被发送到 Canary 入口；对于任何其他 Header 值，将忽略 Header，并通过优先级将请求与其他金丝雀规则进行优先级的比较。
+- `nginx.ingress.kubernetes.io/canary-by-header-value`：要匹配的 Request Header 的值，用于通知 Ingress 将请求路由到 Canary Ingress 中指定的服务。当 Request Header 设置为此值时，它将被路由到 Canary 入口。该规则允许用户自定义 Request Header 的值，必须与上一个 annotation (即：canary-by-header）一起使用。
+- `nginx.ingress.kubernetes.io/canary-weight`：基于服务权重的流量切分，适用于蓝绿部署，权重范围 0 - 100 按百分比将请求路由到 Canary Ingress 中指定的服务。权重为 0 意味着该金丝雀规则不会向 Canary 入口的服务发送任何请求。权重为 100 意味着所有请求都将被发送到 Canary 入口。
+- `nginx.ingress.kubernetes.io/canary-by-cookie`：基于 Cookie 的流量切分，适用于灰度发布与 A/B 测试。用于通知 Ingress 将请求路由到 Canary Ingress 中指定的服务的cookie。当 cookie 值设置为 `always`时，它将被路由到 Canary 入口；当 cookie 值设置为 `never`时，请求不会被发送到 Canary 入口；对于任何其他值，将忽略 cookie 并将请求与其他金丝雀规则进行优先级的比较。
+
+
+
+#### 灰度发布
+
+http://www.woshipm.com/pd/4381854.html
+
+https://tech.youzan.com/gray-deloyments-and-blue-green-deployments-practices-in-youzan/
+
+https://juejin.cn/post/6844904148614250509
